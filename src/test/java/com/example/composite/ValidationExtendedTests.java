@@ -1,0 +1,378 @@
+package com.example.composite;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.composite.config.EndpointRegistry;
+import com.example.composite.exception.CircularDependencyException;
+import com.example.composite.exception.ValidationException;
+import com.example.composite.model.request.CompositeRequest;
+import com.example.composite.model.request.SubRequest;
+import com.example.composite.service.CompositeService;
+
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+
+@ExtendWith(MockitoExtension.class)
+class ValidationExtendedTests {
+    @Mock
+    private RestTemplate restTemplate;
+    
+    @Mock
+    private EndpointRegistry endpointRegistry;
+    
+    @InjectMocks
+    private CompositeService compositeService;
+    
+    private Validator validator;
+
+    @BeforeEach
+    void setup() {
+        validator = Validation.buildDefaultValidatorFactory().getValidator();
+        when(endpointRegistry.isEndpointAvailable(anyString(), anyString()))
+                .thenReturn(true);
+        compositeService.setBaseUrl();
+    }
+
+    @Test
+    void shouldValidateCircularDependencies() {
+        // Direct circular dependency
+        SubRequest request1 = SubRequest.builder()
+            .referenceId("A")
+            .url("/api/a")
+            .method("GET")
+            .dependencies(Set.of("B"))
+            .build();
+
+        SubRequest request2 = SubRequest.builder()
+            .referenceId("B")
+            .url("/api/b")
+            .method("GET")
+            .dependencies(Set.of("A"))
+            .build();
+
+        CompositeRequest directRequest = CompositeRequest.builder()
+            .subRequests(List.of(request1, request2))
+            .build();
+
+        assertThrows(CircularDependencyException.class, () ->
+            compositeService.processRequests(directRequest));
+
+        // Indirect circular dependency
+        SubRequest request3 = SubRequest.builder()
+            .referenceId("A")
+            .url("/api/a")
+            .method("GET")
+            .dependencies(Set.of("B"))
+            .build();
+
+        SubRequest request4 = SubRequest.builder()
+            .referenceId("B")
+            .url("/api/b")
+            .method("GET")
+            .dependencies(Set.of("C"))
+            .build();
+
+        SubRequest request5 = SubRequest.builder()
+            .referenceId("C")
+            .url("/api/c")
+            .method("GET")
+            .dependencies(Set.of("A"))
+            .build();
+
+        CompositeRequest indirectRequest = CompositeRequest.builder()
+            .subRequests(List.of(request3, request4, request5))
+            .build();
+
+        assertThrows(CircularDependencyException.class, () ->
+            compositeService.processRequests(indirectRequest));
+    }
+
+    @Test
+    void shouldValidateMaxRequestDepth() {
+        // Create a chain of requests with excessive depth
+        List<SubRequest> requests = new ArrayList<>();
+        String prevRef = null;
+        
+        for (int i = 0; i < 15; i++) { // Assuming max depth is 10
+            String ref = "req" + i;
+            Set<String> deps = prevRef != null ? Set.of(prevRef) : new HashSet<>();
+            
+            requests.add(SubRequest.builder()
+                .referenceId(ref)
+                .url("/api/" + ref)
+                .method("GET")
+                .dependencies(deps)
+                .build());
+                
+            prevRef = ref;
+        }
+
+        CompositeRequest request = CompositeRequest.builder()
+            .subRequests(requests)
+            .build();
+
+        ValidationException exception = assertThrows(ValidationException.class, () ->
+            compositeService.processRequests(request));
+            
+        assertTrue(exception.getMessage().contains("Maximum request depth exceeded"));
+    }
+
+    @Test
+    void shouldValidateRequestSizes() {
+        // Create large body
+        StringBuilder largeBody = new StringBuilder();
+        for (int i = 0; i < 1_000_000; i++) {
+            largeBody.append("data");
+        }
+
+        SubRequest request = SubRequest.builder()
+            .referenceId("large")
+            .url("/api/large")
+            .method("POST")
+            .body(largeBody.toString())
+            .build();
+
+        CompositeRequest compositeRequest = CompositeRequest.builder()
+            .subRequests(List.of(request))
+            .build();
+
+        ValidationException exception = assertThrows(ValidationException.class, () ->
+            compositeService.processRequests(compositeRequest));
+            
+        assertTrue(exception.getMessage().contains("Request size exceeds maximum limit"));
+    }
+
+    @Test
+    void shouldValidateEndpointAccess() {
+        when(endpointRegistry.isEndpointAvailable(anyString(), anyString()))
+            .thenReturn(false);
+
+        SubRequest request = SubRequest.builder()
+            .referenceId("unauthorized")
+            .url("/api/unauthorized")
+            .method("GET")
+            .build();
+
+        CompositeRequest compositeRequest = CompositeRequest.builder()
+            .subRequests(List.of(request))
+            .build();
+
+        ValidationException exception = assertThrows(ValidationException.class, () ->
+            compositeService.processRequests(compositeRequest));
+            
+        assertTrue(exception.getMessage().contains("Endpoint not available"));
+    }
+
+    @Test
+    void shouldValidateReferenceIds() {
+        // Duplicate reference IDs
+        SubRequest req1 = SubRequest.builder()
+            .referenceId("same")
+            .url("/api/1")
+            .method("GET")
+            .build();
+
+        SubRequest req2 = SubRequest.builder()
+            .referenceId("same")
+            .url("/api/2")
+            .method("GET")
+            .build();
+
+        CompositeRequest request = CompositeRequest.builder()
+            .subRequests(List.of(req1, req2))
+            .build();
+
+        Set<ConstraintViolation<CompositeRequest>> violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+
+        // Invalid reference ID format
+        SubRequest invalidRef = SubRequest.builder()
+            .referenceId("invalid@id")
+            .url("/api/test")
+            .method("GET")
+            .build();
+
+        request = CompositeRequest.builder()
+            .subRequests(List.of(invalidRef))
+            .build();
+
+        violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    void shouldValidateUrlFormats() {
+        List<SubRequest> requests = List.of(
+            // Missing protocol in absolute URL
+            SubRequest.builder()
+                .referenceId("invalid1")
+                .url("example.com/api")
+                .method("GET")
+                .build(),
+
+            // Invalid characters
+            SubRequest.builder()
+                .referenceId("invalid2")
+                .url("/api/test space")
+                .method("GET")
+                .build(),
+
+            // Missing path
+            SubRequest.builder()
+                .referenceId("invalid3")
+                .url("http://")
+                .method("GET")
+                .build()
+        );
+
+        requests.forEach(req -> {
+            CompositeRequest request = CompositeRequest.builder()
+                .subRequests(List.of(req))
+                .build();
+
+            Set<ConstraintViolation<CompositeRequest>> violations = validator.validate(request);
+            assertFalse(violations.isEmpty(), "URL should be invalid: " + req.getUrl());
+        });
+    }
+
+    @Test
+    void shouldValidateMethodCompatibility() {
+        // GET request with body
+        SubRequest getWithBody = SubRequest.builder()
+            .referenceId("get")
+            .url("/api/test")
+            .method("GET")
+            .body("body")
+            .build();
+
+        CompositeRequest request = CompositeRequest.builder()
+            .subRequests(List.of(getWithBody))
+            .build();
+
+        Set<ConstraintViolation<CompositeRequest>> violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+
+        // POST without body
+        SubRequest postWithoutBody = SubRequest.builder()
+            .referenceId("post")
+            .url("/api/test")
+            .method("POST")
+            .build();
+
+        request = CompositeRequest.builder()
+            .subRequests(List.of(postWithoutBody))
+            .build();
+
+        violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    void shouldValidateTimeoutConfiguration() {
+        // Invalid timeout values
+        CompositeRequest request = CompositeRequest.builder()
+            .subRequests(List.of(
+                SubRequest.builder()
+                    .referenceId("test")
+                    .url("/api/test")
+                    .method("GET")
+                    .build()
+            ))
+            .timeout(Duration.ofMillis(-1))
+            .build();
+
+        Set<ConstraintViolation<CompositeRequest>> violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+
+        // Per-request timeout greater than global timeout
+        request = CompositeRequest.builder()
+            .subRequests(List.of(
+                SubRequest.builder()
+                    .referenceId("test")
+                    .url("/api/test")
+                    .method("GET")
+                    .build()
+            ))
+            .timeout(Duration.ofSeconds(5))
+            .build();
+
+        violations = validator.validate(request);
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    void shouldValidateHeaderValues() {
+        // Invalid header values
+        SubRequest request = SubRequest.builder()
+            .referenceId("test")
+            .url("/api/test")
+            .method("GET")
+            .headers(Map.of(
+                "Invalid\nHeader", "value",
+                "Content-Type", "invalid;charset=\n"
+            ))
+            .build();
+
+        CompositeRequest compositeRequest = CompositeRequest.builder()
+            .subRequests(List.of(request))
+            .build();
+
+        Set<ConstraintViolation<CompositeRequest>> violations = validator.validate(compositeRequest);
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    void shouldValidateDependencyReferences() {
+        // Reference to non-existent dependency
+        SubRequest request = SubRequest.builder()
+            .referenceId("dependent")
+            .url("/api/${nonexistent.body.id}")
+            .method("GET")
+            .build();
+
+        CompositeRequest compositeRequest = CompositeRequest.builder()
+            .subRequests(List.of(request))
+            .build();
+
+        ValidationException exception = assertThrows(ValidationException.class, () ->
+            compositeService.processRequests(compositeRequest));
+            
+        assertTrue(exception.getMessage().contains("Invalid reference"));
+
+        // Invalid reference format
+        request = SubRequest.builder()
+            .referenceId("invalid")
+            .url("/api/${invalid..body}")
+            .method("GET")
+            .build();
+
+        CompositeRequest compositeRequest2 = CompositeRequest.builder()
+            .subRequests(List.of(request))
+            .build();
+
+        exception = assertThrows(ValidationException.class, () ->
+            compositeService.processRequests(compositeRequest2));
+            
+        assertTrue(exception.getMessage().contains("Invalid reference format"));
+    }
+}

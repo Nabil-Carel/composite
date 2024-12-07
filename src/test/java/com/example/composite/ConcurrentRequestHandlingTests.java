@@ -1,0 +1,346 @@
+package com.example.composite;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.matches;
+import static org.mockito.Mockito.when;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.composite.config.EndpointRegistry;
+import com.example.composite.model.request.CompositeRequest;
+import com.example.composite.model.request.SubRequest;
+import com.example.composite.model.response.CompositeResponse;
+import com.example.composite.service.CompositeService;
+import com.example.composite.config.BaseUrlProvider;
+
+@ExtendWith(MockitoExtension.class)
+class ConcurrentRequestHandlingTests {
+    @Mock
+    private RestTemplate restTemplate;
+    
+    @Mock
+    private EndpointRegistry endpointRegistry;
+
+    @Mock
+    private BaseUrlProvider urlProvider;
+    
+    @InjectMocks
+    private CompositeService compositeService;
+    
+    private ExecutorService executorService;
+    private CountDownLatch latch;
+    private ConcurrentHashMap<String, Integer> concurrentRequests;
+    private final String baseUrl = "http://localhost:8080"; // Extracted base URL
+
+    @BeforeEach
+    void setup() {
+        when(endpointRegistry.isEndpointAvailable(anyString(), anyString()))
+            .thenReturn(true);
+        executorService = Executors.newFixedThreadPool(10);
+        concurrentRequests = new ConcurrentHashMap<>();
+        latch = new CountDownLatch(1);
+        when(urlProvider.getBaseUrl()).thenReturn(baseUrl);
+        compositeService.setBaseUrl();
+    }
+
+    @AfterEach
+    void cleanup() {
+        executorService.shutdownNow();
+    }
+
+    @Test
+    void shouldHandleConcurrentCompositeRequests() throws InterruptedException {
+        // Given
+        int numberOfRequests = 10;
+        CountDownLatch completionLatch = new CountDownLatch(numberOfRequests);
+        List<Future<CompositeResponse>> futures = new ArrayList<>();
+
+        when(restTemplate.exchange(
+            eq(baseUrl + "/api/test"), // Prepend baseUrl
+            any(),
+            any(),
+            eq(Object.class)
+        )).thenAnswer(inv -> {
+            latch.await();
+            return ResponseEntity.ok(Map.of("result", "success"));
+        });
+
+        // When - Submit multiple requests simultaneously
+        for (int i = 0; i < numberOfRequests; i++) {
+            futures.add(executorService.submit(() -> {
+                CompositeRequest request = CompositeRequest.builder()
+                    .subRequests(List.of(
+                        SubRequest.builder()
+                            .referenceId("req1")
+                            .url("/api/test") // No baseUrl here
+                            .method("GET")
+                            .build(),
+                        SubRequest.builder()
+                            .referenceId("req2")
+                            .url("/api/test") // No baseUrl here
+                            .method("GET")
+                            .build()
+                    ))
+                    .build();
+
+                return compositeService.processRequests(request);
+            }));
+        }
+
+        // Release all requests simultaneously
+        latch.countDown();
+
+        // Then
+        List<CompositeResponse> responses = futures.stream()
+            .map(this::getFuture)
+            .collect(Collectors.toList());
+
+        assertEquals(numberOfRequests, responses.size());
+        assertTrue(concurrentRequests.size() > 1); // Verify multiple threads were used
+        assertFalse(responses.stream().anyMatch(CompositeResponse::isHasErrors));
+    }
+
+    @Test
+    void shouldMaintainOrderWithConcurrency() throws InterruptedException {
+        // Given
+        AtomicInteger counter = new AtomicInteger(0);
+        Map<String, Integer> executionOrder = new ConcurrentHashMap<>();
+
+        when(restTemplate.exchange(
+            matches("/api/ordered/.*"),
+            any(),
+            any(),
+            eq(Object.class)
+        )).thenAnswer(inv -> {
+            String url = inv.getArgument(0);
+            int order = counter.incrementAndGet();
+            executionOrder.put(url, order);
+            Thread.sleep(100); // Simulate processing time
+            return ResponseEntity.ok(Map.of("order", order));
+        });
+
+        // When
+        CompositeRequest request = CompositeRequest.builder()
+            .subRequests(List.of(
+                SubRequest.builder()
+                    .referenceId("first")
+                    .url("/api/ordered/1")
+                    .method("GET")
+                    .build(),
+                SubRequest.builder()
+                    .referenceId("second")
+                    .url("/api/ordered/2")
+                    .method("GET")
+                    .dependencies(Set.of("first"))
+                    .build(),
+                SubRequest.builder()
+                    .referenceId("third")
+                    .url("/api/ordered/3")
+                    .method("GET")
+                    .dependencies(Set.of("second"))
+                    .build()
+            ))
+            .build();
+
+        CompositeResponse response = compositeService.processRequests(request);
+
+        // Then
+        assertFalse(response.isHasErrors());
+        assertTrue(executionOrder.get("/api/ordered/1") < executionOrder.get("/api/ordered/2"));
+        assertTrue(executionOrder.get("/api/ordered/2") < executionOrder.get("/api/ordered/3"));
+    }
+
+    @Test
+    void shouldHandleResourceContention() throws InterruptedException {
+        // Given
+        AtomicInteger activeRequests = new AtomicInteger(0);
+        int maxConcurrent = 5; // Maximum concurrent requests allowed
+
+        when(restTemplate.exchange(
+            eq("/api/shared"),
+            any(),
+            any(),
+            eq(Object.class)
+        )).thenAnswer(inv -> {
+            int active = activeRequests.incrementAndGet();
+            try {
+                assertTrue(active <= maxConcurrent, 
+                    "Too many concurrent requests: " + active);
+                Thread.sleep(100); // Simulate processing
+                return ResponseEntity.ok(Map.of("active", active));
+            } finally {
+                activeRequests.decrementAndGet();
+            }
+        });
+
+        // When
+        List<Future<CompositeResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            futures.add(executorService.submit(() -> {
+                CompositeRequest request = CompositeRequest.builder()
+                    .subRequests(List.of(
+                        SubRequest.builder()
+                            .referenceId("shared")
+                            .url("/api/shared")
+                            .method("GET")
+                            .build()
+                    ))
+                    .build();
+
+                return compositeService.processRequests(request);
+            }));
+        }
+
+        // Then
+        List<CompositeResponse> responses = futures.stream()
+            .map(this::getFuture)
+            .collect(Collectors.toList());
+
+        assertFalse(responses.stream().anyMatch(CompositeResponse::isHasErrors));
+    }
+
+    @Test
+    void shouldRespectRateLimits() {
+        // Given
+        AtomicInteger requestCount = new AtomicInteger(0);
+        Map<Long, Integer> requestsPerSecond = new ConcurrentHashMap<>();
+
+        when(restTemplate.exchange(
+            eq("/api/limited"),
+            any(),
+            any(),
+            eq(Object.class)
+        )).thenAnswer(inv -> {
+            long second = System.currentTimeMillis() / 1000;
+            requestsPerSecond.merge(second, 1, Integer::sum);
+            
+            int count = requestCount.incrementAndGet();
+            if (requestsPerSecond.get(second) > 5) { // Rate limit: 5 requests per second
+                throw new HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS);
+            }
+            
+            return ResponseEntity.ok(Map.of("count", count));
+        });
+
+        // When
+        List<Future<CompositeResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            futures.add(executorService.submit(() -> {
+                CompositeRequest request = CompositeRequest.builder()
+                    .subRequests(List.of(
+                        SubRequest.builder()
+                            .referenceId("limited")
+                            .url("/api/limited")
+                            .method("GET")
+                            .build()
+                    ))
+                    .build();
+
+                return compositeService.processRequests(request);
+            }));
+            
+            // Small delay to spread requests across multiple seconds
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        }
+
+        // Then
+        List<CompositeResponse> responses = futures.stream()
+            .map(this::getFuture)
+            .collect(Collectors.toList());
+
+        // Verify rate limits were respected
+        requestsPerSecond.values().forEach(count -> 
+            assertTrue(count <= 5, "Rate limit exceeded: " + count));
+    }
+
+    @Test
+    void shouldHandleConcurrentErrorScenarios() {
+        // Given
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger errorCount = new AtomicInteger(0);
+
+        when(restTemplate.exchange(
+            eq("/api/flaky"),
+            any(),
+            any(),
+            eq(Object.class)
+        )).thenAnswer(inv -> {
+            if (Math.random() < 0.5) { // 50% chance of failure
+                errorCount.incrementAndGet();
+                throw new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            successCount.incrementAndGet();
+            return ResponseEntity.ok("success");
+        });
+
+        // When
+        List<Future<CompositeResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            futures.add(executorService.submit(() -> {
+                CompositeRequest request = CompositeRequest.builder()
+                    .subRequests(List.of(
+                        SubRequest.builder()
+                            .referenceId("flaky")
+                            .url("/api/flaky")
+                            .method("GET")
+                            .build()
+                    ))
+                    .allOrNone(false)
+                    .build();
+
+                return compositeService.processRequests(request);
+            }));
+        }
+
+        // Then
+        List<CompositeResponse> responses = futures.stream()
+            .map(this::getFuture)
+            .collect(Collectors.toList());
+
+        assertTrue(successCount.get() > 0);
+        assertTrue(errorCount.get() > 0);
+        assertEquals(20, successCount.get() + errorCount.get());
+    }
+
+    private <T> T getFuture(Future<T> future) {
+        try {
+            return future.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
