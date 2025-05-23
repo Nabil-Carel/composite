@@ -1,13 +1,11 @@
 package com.example.composite.config;
 
-import java.net.URI;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
+import com.example.composite.annotation.CompositeEndpoint;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
+import jakarta.annotation.PostConstruct;
+import lombok.*;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
@@ -19,17 +17,8 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-import com.example.composite.annotation.CompositeEndpoint;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.LoadingCache;
-
-import jakarta.annotation.PostConstruct;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.extern.slf4j.Slf4j;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 @Component
 @Slf4j
@@ -55,13 +44,39 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         }
     }
     
-    @Getter
-    @Setter
-    @Builder
-    public static class EndpointInfo {
-        private String pattern;
-        private String method;
-        private String description;
+    private void discoverEndpoints() {
+        RequestMappingHandlerMapping handlerMapping = applicationContext.getBean(RequestMappingHandlerMapping.class);
+        Map<RequestMappingInfo, HandlerMethod> handlerMethods = handlerMapping.getHandlerMethods();
+
+        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMethods.entrySet()) {
+            HandlerMethod handlerMethod = entry.getValue();
+            CompositeEndpoint annotation = handlerMethod.getMethodAnnotation(CompositeEndpoint.class);
+
+            if (annotation != null) {
+                RequestMappingInfo mapping = entry.getKey();
+                if (mapping.getPathPatternsCondition() != null) {
+                    String pattern = mapping.getPathPatternsCondition().getPatterns().iterator().next()
+                            .getPatternString();
+                    Set<RequestMethod> methods = mapping.getMethodsCondition().getMethods();
+
+                    for (RequestMethod method : methods) {
+                        EndpointPattern endpointPattern = new EndpointPattern(method.name(), pattern);
+                        EndpointInfo info = EndpointInfo.builder()
+                                .pattern(pattern)
+                                .method(method.name())
+                                .returnClass(annotation.value())
+                                .build();
+
+                        availableEndpoints.put(endpointPattern, info);
+                        String firstSegment = getFirstSegment(pattern);
+                        patternsByFirstSegment.computeIfAbsent(firstSegment, k -> new HashSet<>())
+                            .add(endpointPattern);
+
+                        log.info("Registered composite endpoint: {}", endpointPattern);
+                    }
+                }
+            }
+        }
     }
     
     @PostConstruct
@@ -77,37 +92,21 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         discoverEndpoints();
     }
 
-    private void discoverEndpoints() {
-        RequestMappingHandlerMapping handlerMapping = applicationContext.getBean(RequestMappingHandlerMapping.class);
-        Map<RequestMappingInfo, HandlerMethod> handlerMethods = handlerMapping.getHandlerMethods();
+    public Optional<EndpointInfo> getEndpointInformations(String method, String url) {
+        try {
+            // String path = url.startsWith("http") ?
+            //     new URI(url).getPath() : url;
 
-        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMethods.entrySet()) {
-            HandlerMethod handlerMethod = entry.getValue();
-            CompositeEndpoint annotation = handlerMethod.getMethodAnnotation(CompositeEndpoint.class);
-
-            if (annotation != null) {
-                RequestMappingInfo mapping = entry.getKey();
-                if (mapping.getPatternsCondition() != null) {
-                    String pattern = mapping.getPatternsCondition().getPatterns().iterator().next();
-                    Set<RequestMethod> methods = mapping.getMethodsCondition().getMethods();
-
-                    for (RequestMethod method : methods) {
-                        EndpointPattern endpointPattern = new EndpointPattern(method.name(), pattern);
-                        EndpointInfo info = EndpointInfo.builder()
-                            .pattern(pattern)
-                            .method(method.name())
-                            .description(annotation.description())
-                            .build();
-
-                        availableEndpoints.put(endpointPattern, info);
-                        String firstSegment = getFirstSegment(pattern);
-                        patternsByFirstSegment.computeIfAbsent(firstSegment, k -> new HashSet<>())
-                            .add(endpointPattern);
-
-                        log.info("Registered composite endpoint: {}", endpointPattern);
-                    }
-                }
+            String firstSegment = getFirstSegment(url);
+            if (!patternsByFirstSegment.containsKey(firstSegment)) {
+                throw new RuntimeException(String.format("Endpoint %s not available for composite use", url));
             }
+
+            return matchCache.get(method + ":" + url);
+
+        } catch (Exception e) {
+            log.error("Error checking endpoint availability", e);
+            throw new RuntimeException(e);
         }
     }
 
@@ -119,23 +118,16 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
             normalizedPath;
     }
 
-    public boolean isEndpointAvailable(String method, String url) {
-        try {
-            String path = url.startsWith("http") ? 
-                new URI(url).getPath() : url;
-            
-            String firstSegment = getFirstSegment(path);
-            if (!patternsByFirstSegment.containsKey(firstSegment)) {
-                return false;
-            }
-            
-            return matchCache.get(method + ":" + path).isPresent();
-            
-        } catch (Exception e) {
-            log.error("Error checking endpoint availability", e);
-            return false;
-        }
+    @Getter
+    @Setter
+    @Builder
+    public static class EndpointInfo {
+        private String pattern;
+        private String method;
+        private String description;
+        private Class<?> returnClass;
     }
+
 
     private Optional<EndpointInfo> findMatchingEndpointUncached(String key) {
         String[] parts = key.split(":", 2);

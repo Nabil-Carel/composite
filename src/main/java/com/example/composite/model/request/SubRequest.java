@@ -1,46 +1,38 @@
 package com.example.composite.model.request;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import lombok.*;
+import lombok.experimental.Delegate;
 
-import jakarta.validation.constraints.AssertTrue;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Getter
 @Setter
 @Builder
+@RequiredArgsConstructor
+@AllArgsConstructor
 public class SubRequest {
-    @NotBlank(message = "URL is required")
-//     @Pattern(regexp = "^(http|https)://.*|^/.*", 
-//             message = "URL must be absolute or start with /")
-    private String url;
-
-    @NotBlank(message = "HTTP method is required")
-    @Pattern(regexp = "^(GET|POST|PUT|DELETE|PATCH)$", 
-            message = "Invalid HTTP method")
-    private String method;
-
-    @NotBlank(message = "Reference ID is required")
-    @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", 
-            message = "Reference ID must be alphanumeric with dashes/underscores, max 50 chars")
-    private String referenceId;
-
-    private Object body;
-    @Builder.Default
-    private Map<String, String> headers = new HashMap<>();
-    @Builder.Default
+    @Delegate(types = SubRequestDto.class)
+    private final SubRequestDto subRequestDto;
+    private String resolvedUrl;
+    private Map<String, String> resolvedHeaders;
     private Set<String> dependencies = new HashSet<>();
 
-    @AssertTrue(message = "Body is required for POST/PUT/PATCH requests")
-    private boolean isBodyValid() {
-        return !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase()) 
-            || body != null;
+    public Set<String> getDependencies() {
+        if(dependencies.isEmpty()) {
+            Matcher matcher = Pattern.compile("\\$\\{([^}]+)\\}")
+                    .matcher(subRequestDto.getUrl());
+
+            while (matcher.find()) {
+                String reference = matcher.group(1);
+                String refId = reference.split("\\.")[0];
+                dependencies.add(refId);
+            }
+        }
+
+        return dependencies;
     }
+
 }
+    
