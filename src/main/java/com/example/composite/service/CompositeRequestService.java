@@ -1,7 +1,7 @@
 package com.example.composite.service;
 
 import java.io.IOException;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 
 import com.example.composite.model.ResponseTracker;
@@ -49,6 +49,7 @@ public class CompositeRequestService {
             SecurityContext securityContext,
             String requestId
     ) throws ServletException, IOException {
+
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(
                 subRequest.getMethod().toUpperCase(), subRequest.getUrl()
         );
@@ -77,10 +78,40 @@ public class CompositeRequestService {
 
     }
 
-    public void processRequest (CompositeRequestWrapper requestWrapper,
-                                 HttpServletResponse response,
-                                 SecurityContext securityContext,
-                                 String requestId) {
+    public void processRequest(
+            CompositeRequestWrapper requestWrapper,
+            HttpServletResponse response,
+            SecurityContext securityContext,
+            String requestId
+    ) throws IOException, ServletException {
+        // Map referenceId to SubRequestDto
+        Map<String, SubRequest> subRequestMap = new HashMap<>();
+        // Map referenceId to set of dependencies
+        Map<String, Set<String>> dependencies = new HashMap<>();
+
+        for (SubRequestDto dto : requestWrapper.getBody().getSubRequests()) {
+            SubRequest req = new SubRequest(dto);
+            subRequestMap.put(dto.getReferenceId(), req);
+            dependencies.put(dto.getReferenceId(),
+                    new HashSet<>(Optional.ofNullable(req.getDependencies()).orElse(Set.of())));
+        }
+
+        // Process sub-requests with no dependencies first
+        for (SubRequest request: subRequestMap.values()) {
+            if (request.getDependencies() == null || request.getDependencies().isEmpty()) {
+                forwardSubrequest(
+                        requestWrapper,
+                        request.getSubRequestDto(),
+                        response,
+                        securityContext,
+                        requestId
+                );
+            }
+            else {
+            }
+
+        }
+
 
     }
 }

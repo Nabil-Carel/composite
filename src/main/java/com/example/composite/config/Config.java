@@ -1,6 +1,6 @@
 package com.example.composite.config;
 
-import com.example.composite.filter.CompositeRequestFilter;
+import com.example.composite.config.filter.CompositeRequestFilter;
 import com.example.composite.model.ResponseTracker;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;

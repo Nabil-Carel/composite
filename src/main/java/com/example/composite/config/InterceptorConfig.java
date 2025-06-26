@@ -1,7 +1,7 @@
 package com.example.composite.config;
 
+import com.example.composite.config.interceptor.ResponseInterceptor;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.lang.Nullable;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 

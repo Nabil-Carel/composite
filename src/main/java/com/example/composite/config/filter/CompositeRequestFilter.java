@@ -1,4 +1,4 @@
-package com.example.composite.filter;
+package com.example.composite.config.filter;
 
 import java.io.IOException;
 import java.util.List;
@@ -13,7 +13,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import com.example.composite.model.request.CompositeRequestWrapper;
-import com.example.composite.model.request.SubRequestDto;
 import com.example.composite.service.CompositeRequestService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -60,9 +59,9 @@ public class CompositeRequestFilter implements Filter {
         }*/
 
             compositeRequestService.processRequest(request,
-                    (HttpServletResponse) servletResponse,
-                    originalSecurityContext,
-                    requestId);
+                                                   (HttpServletResponse) servletResponse,
+                                                   originalSecurityContext,
+                                                   requestId);
 
         }
         else {

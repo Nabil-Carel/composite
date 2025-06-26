@@ -40,34 +40,17 @@ public class CompositeController {
         if (!hasErrors) {
             ResponseTracker responseTracker = responseStore.get(requestId);
 
-            if (responseTracker.getResponseCount().get() == 0) {
-                CompositeResponse compositeResponse = CompositeResponse.builder()
-                        .responses(responseTracker.getSubResponseMap()).build();
-                request.removeAttribute("composite");
-                compositeResponseFuture.complete(compositeResponse);
-            } else {
-                // The requests are still being processed
-                responseTracker.getResponseCount()
-                        .addValueChangeListener(((oldValue, newValue) -> {
-                            if (newValue == 0) {
-                                CompositeResponse compositeResponse = CompositeResponse.builder()
-                                        .responses(responseTracker.getSubResponseMap()).build();
-                                request.removeAttribute("composite");
-                                compositeResponseFuture.complete(compositeResponse);
-                            }
-                        }));
-            }
-
-            return compositeResponseFuture
+            return responseTracker.getFuture()
                     .orTimeout(30, TimeUnit.SECONDS)
                     .thenApply(compositeResponse -> {
-                        responseTracker.cleanup();
-                        response.reset();
                         responseStore.remove(requestId);
+                        request.removeAttribute("composite");
+                        response.reset();
                         return ResponseEntity.ok(compositeResponse);
                     })
                     .exceptionally(ex -> {
                         log.error("Execution failed: {}", ex.getMessage());
+                        responseStore.remove(requestId); // cleanup here too
                         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
                     });
         }

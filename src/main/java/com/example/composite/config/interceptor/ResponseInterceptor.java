@@ -1,4 +1,4 @@
-package com.example.composite.config;
+package com.example.composite.config.interceptor;
 
 import com.example.composite.model.ResponseTracker;
 import com.example.composite.model.response.SubResponse;
@@ -35,6 +35,7 @@ public class ResponseInterceptor  implements HandlerInterceptor{
     public void postHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
                            @NonNull Object handler, @Nullable ModelAndView modelAndView) throws JsonProcessingException {
         Boolean isComposite = (Boolean) request.getAttribute("composite");
+
         if(isComposite != null && isComposite){
            String requestId = (String) request.getAttribute("requestId");
            SubResponseWrapper subResponseWrapper = (SubResponseWrapper) response;
