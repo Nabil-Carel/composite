@@ -1,0 +1,47 @@
+{
+	"info": {
+		"_postman_id": "953b9251-a444-44ee-a50c-8498cabc95df",
+		"name": "spring-composite",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "3753905"
+	},
+	"item": [
+		{
+			"name": "New Request",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"subRequests\":[\r\n        {\r\n            \"url\": \"/api/composite/testPost\",\r\n            \"method\": \"POST\",\r\n            \"referenceId\":\"testPost\",\r\n            \"body\": {\r\n                \"value\": \"hello-test-post\"\r\n            }\r\n        },\r\n        {\r\n            \"url\": \"/api/composite/test\",\r\n            \"method\": \"GET\",\r\n            \"referenceId\":\"test\"\r\n        },\r\n        {\r\n            \"url\": \"/api/composite/helloWorld\",\r\n            \"method\": \"GET\",\r\n            \"referenceId\":\"Hello\"\r\n        },\r\n        {\r\n            \"url\": \"/api/composite/num\",\r\n            \"method\": \"GET\",\r\n            \"referenceId\":\"num\"\r\n        }\r\n    ]\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:9090/api/composite/execute",
+					"host": [
+						"localhost"
+					],
+					"port": "9090",
+					"path": [
+						"api",
+						"composite",
+						"execute"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "New Request Copy",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		}
+	]
+}
