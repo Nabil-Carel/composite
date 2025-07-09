@@ -2,10 +2,17 @@ package com.example.composite.config.filter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 import com.example.composite.model.ResponseTracker;
+import com.example.composite.model.SubRequestCoordinator;
+import com.example.composite.model.request.SubRequest;
+import com.example.composite.model.request.SubRequestDto;
+import com.example.composite.service.CompositeBatchContext;
 import com.example.composite.service.CompositeRequestValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContext;
@@ -49,19 +56,21 @@ public class CompositeRequestFilter implements Filter {
             ResponseTracker tracker = new ResponseTracker(request.getBody().getSubRequests().size());
             responseStore.put(requestId, tracker);
             SecurityContext originalSecurityContext = SecurityContextHolder.getContext();
+            Map<String, SubRequest> requestMap = getRequestMap(request.getBody().getSubRequests());
+            Map<String, Set<String>> dependencyMap = getDependencyMap(requestMap);
+            SubRequestCoordinator requestCoordinator = new SubRequestCoordinator(dependencyMap);
+            CompositeBatchContext batchContext = new CompositeBatchContext(
+                tracker,
+                requestCoordinator,
+                requestMap,
+                (HttpServletRequest) servletRequest,
+                (HttpServletResponse) servletResponse,
+                compositeRequestService,
+                originalSecurityContext,
+                requestId
+            );
 
-      /*  for (SubRequestDto subRequestDto : request.getBody().getSubRequests()) {
-            compositeRequestService.forwardSubrequest(request,
-                                                      subRequestDto,
-                                                      (HttpServletResponse) servletResponse,
-                                                      originalSecurityContext,
-                                                      requestId);
-        }*/
-
-            compositeRequestService.processRequest(request,
-                                                   (HttpServletResponse) servletResponse,
-                                                   originalSecurityContext,
-                                                   requestId);
+            batchContext.startInitialRequests();
 
         }
         else {
@@ -71,4 +80,22 @@ public class CompositeRequestFilter implements Filter {
         // Continue the filter chain to the controller
         filterChain.doFilter(servletRequest, servletResponse);
     }
+
+    private Map<String, SubRequest> getRequestMap(List<SubRequestDto> requests) {
+        return requests.stream()
+                .collect(Collectors.toMap(
+                        SubRequestDto::getReferenceId,
+                        SubRequest::new
+                ));
+    }
+
+    private Map<String, Set<String>> getDependencyMap(Map<String, SubRequest> requests) {
+        return requests.values().stream()
+                .collect(Collectors.toMap(
+                        SubRequest::getReferenceId,
+                        SubRequest::getDependencies
+                ));
+    }
+
+
 }

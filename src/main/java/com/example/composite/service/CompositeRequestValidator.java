@@ -2,7 +2,6 @@ package com.example.composite.service;
 
 import com.example.composite.config.EndpointRegistry;
 import com.example.composite.config.EndpointRegistry.EndpointInfo;
-import com.example.composite.model.ResponseTracker;
 import com.example.composite.model.request.CompositeRequest;
 import com.example.composite.model.request.SubRequest;
 import com.example.composite.model.request.SubRequestDto;
@@ -16,10 +15,8 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
-import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -27,7 +24,6 @@ import java.util.stream.Collectors;
 public class CompositeRequestValidator {
     private final Validator validator;
     private final EndpointRegistry endpointRegistry;
-    private final ConcurrentMap<String, ResponseTracker> responseStore;
 
     @Value("${composite.max-depth:10}")
     private int maxDepth;

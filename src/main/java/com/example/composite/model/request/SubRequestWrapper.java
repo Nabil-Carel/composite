@@ -12,18 +12,22 @@ import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.ReadListener;
+import lombok.Getter;
+import lombok.Setter;
 
 public class SubRequestWrapper extends HttpServletRequestWrapper {
     private final String method;
+    @Setter
     private final String uri;
     private final byte[] body;
+    @Getter
     private final Map<String, String> headers;
 
 
     public SubRequestWrapper(HttpServletRequest original, SubRequest subRequest, ObjectMapper mapper) {
         super(original);
         this.method = subRequest.getMethod();
-        this.uri = subRequest.getUrl();
+        this.uri = subRequest.getResolvedUrl() == null ? subRequest.getUrl() : subRequest.getResolvedUrl();
         this.body = convertBodyToBytes(subRequest.getBody(), mapper);
         this.headers = new HashMap<>(subRequest.getHeaders());
     }
@@ -36,10 +40,6 @@ public class SubRequestWrapper extends HttpServletRequestWrapper {
     @Override
     public String getRequestURI() {
         return uri;
-    }
-
-    public Map<String, String> getHeaders() {
-        return headers;
     }
 
     @Override
