@@ -9,10 +9,13 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import com.example.composite.model.ResponseTracker;
+import com.example.composite.model.ResponseTrackerImpl;
 import com.example.composite.model.SubRequestCoordinator;
+import com.example.composite.model.SubRequestCoordinatorImpl;
 import com.example.composite.model.request.SubRequest;
 import com.example.composite.model.request.SubRequestDto;
 import com.example.composite.service.CompositeBatchContext;
+import com.example.composite.service.CompositeBatchContextImpl;
 import com.example.composite.service.CompositeRequestValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContext;
@@ -53,13 +56,13 @@ public class CompositeRequestFilter implements Filter {
         servletRequest.setAttribute("composite", true);
 
         if (errors.isEmpty()) {
-            ResponseTracker tracker = new ResponseTracker(request.getBody().getSubRequests().size());
+            ResponseTracker tracker = new ResponseTrackerImpl(request.getBody().getSubRequests().size());
             responseStore.put(requestId, tracker);
             SecurityContext originalSecurityContext = SecurityContextHolder.getContext();
             Map<String, SubRequest> requestMap = getRequestMap(request.getBody().getSubRequests());
             Map<String, Set<String>> dependencyMap = getDependencyMap(requestMap);
-            SubRequestCoordinator requestCoordinator = new SubRequestCoordinator(dependencyMap);
-            CompositeBatchContext batchContext = new CompositeBatchContext(
+            SubRequestCoordinator requestCoordinator = new SubRequestCoordinatorImpl(dependencyMap);
+            CompositeBatchContext batchContext = new CompositeBatchContextImpl(
                 tracker,
                 requestCoordinator,
                 requestMap,

@@ -26,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 public class EndpointRegistry implements ApplicationListener<ApplicationReadyEvent>{
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
     private final ApplicationContext applicationContext;
-    private final CompositeApiProperties properties;
     private final Map<EndpointPattern, EndpointInfo> availableEndpoints = new HashMap<>();
     private final Map<String, Set<EndpointPattern>> patternsByFirstSegment = new HashMap<>();
     private LoadingCache<String, Optional<EndpointInfo>> matchCache;

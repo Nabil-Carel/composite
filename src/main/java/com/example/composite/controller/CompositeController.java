@@ -7,6 +7,7 @@ import com.example.composite.model.response.CompositeResponse;
 import com.example.composite.model.response.SubResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,13 @@ import java.util.concurrent.TimeUnit;
 public class CompositeController {
     private final ConcurrentMap<String, ResponseTracker> responseStore;
     private final EndpointRegistry endpointRegistry;
+
+   @lombok.Data
+    private class Data {
+        private String name;
+        private String value;
+        private int id;
+    }
 
     @PostMapping("/execute")
     public CompletableFuture<ResponseEntity<CompositeResponse>> execute(HttpServletRequest request,
@@ -76,7 +84,9 @@ public class CompositeController {
     @GetMapping("/test")
     @CompositeEndpoint(value = SubResponse.class)
     public ResponseEntity<SubResponse> getTest() {
-        return ResponseEntity.ok(SubResponse.builder().body("test").referenceId("test").build());
+        return ResponseEntity.ok()
+                .header("bearer", "aaaa")
+                .body(SubResponse.builder().body("test").referenceId("test").build());
     }
 
     @PostMapping("/testPost")
@@ -97,4 +107,25 @@ public class CompositeController {
     public ResponseEntity<Integer> getNum() {
         return ResponseEntity.ok(0);
     }
+
+    @GetMapping("/data")
+    @CompositeEndpoint(value = Data.class)
+    public ResponseEntity<Data> getData() {
+        Data data = new Data();
+        data.setName("testName");
+        data.setValue("testValue");
+        data.setId(1);
+        return ResponseEntity.ok(data);
+    }
+
+    @GetMapping("/data/")
+    public ResponseEntity<Data> getData2() {
+        Data data = new Data();
+        data.setName("testName");
+        data.setValue("testValue");
+        data.setId(1);
+        return ResponseEntity.ok(data);
+    }
+
+
 }

@@ -36,27 +36,31 @@ public class ResponseInterceptor  implements HandlerInterceptor{
                            @NonNull Object handler, @Nullable ModelAndView modelAndView) throws JsonProcessingException {
         Boolean isComposite = (Boolean) request.getAttribute("composite");
 
-        if(isComposite != null && isComposite){
-           String requestId = (String) request.getAttribute("requestId");
-           SubResponseWrapper subResponseWrapper = (SubResponseWrapper) response;
-           Class<?> returnClass = subResponseWrapper.getResponseType();
-           Map<String, String> headers = subResponseWrapper.getHeadersAsMap();
-
-           //SubResponseWrapper subResponseWrapper = new SubResponseWrapper(response, Object.class, objectMapper);
-           String responseBody = subResponseWrapper.getCapturedResponseBody();
-           Object body = String.class.equals(returnClass) ?
-                   responseBody :
-                   objectMapper.readValue(responseBody, returnClass);
-
-           SubResponse subResponse = SubResponse.builder()
-                   .headers(headers)
-                   .httpStatus(response.getStatus())
-                   .body(body)
-                   .referenceId(subResponseWrapper.getReference())
-                   .build();
-
-           responseStore.get(requestId).addResponse(subResponseWrapper.getReference(), subResponse);
+        if((isComposite == null || !isComposite || request.getRequestURI().equals("/api/composite/execute"))
+                && !(response instanceof SubResponseWrapper)) {
+            return;
        }
+
+        String requestId = (String) request.getAttribute("requestId");
+        SubResponseWrapper subResponseWrapper = (SubResponseWrapper) response;
+        Class<?> returnClass = subResponseWrapper.getResponseType();
+        Map<String, String> headers = subResponseWrapper.getHeadersAsMap();
+
+        //SubResponseWrapper subResponseWrapper = new SubResponseWrapper(response, Object.class, objectMapper);
+        String responseBody = subResponseWrapper.getCapturedResponseBody();
+        Object body = String.class.equals(returnClass) ?
+                responseBody :
+                objectMapper.readValue(responseBody, returnClass);
+
+        SubResponse subResponse = SubResponse.builder()
+                .headers(headers)
+                .httpStatus(response.getStatus())
+                .body(body)
+                .referenceId(subResponseWrapper.getReference())
+                .build();
+
+        responseStore.get(requestId).addResponse(subResponseWrapper.getReference(), subResponse);
+        response.reset();
 
     }
 }
