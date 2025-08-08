@@ -12,10 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Set;
@@ -32,7 +29,7 @@ public class CompositeController {
     private final EndpointRegistry endpointRegistry;
 
    @lombok.Data
-    private class Data {
+    static class Data {
         private String name;
         private String value;
         private int id;
@@ -118,11 +115,12 @@ public class CompositeController {
         return ResponseEntity.ok(data);
     }
 
-    @GetMapping("/data/")
-    public ResponseEntity<Data> getData2() {
+    @CompositeEndpoint(value= Data.class)
+    @GetMapping("/data/{id}")
+    public ResponseEntity<Data> getData2(@PathVariable int id) {
         Data data = new Data();
-        data.setName("testName");
-        data.setValue("testValue");
+        data.setName("testName2");
+        data.setValue("testValue2");
         data.setId(1);
         return ResponseEntity.ok(data);
     }

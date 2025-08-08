@@ -279,9 +279,10 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
     public String validateResolvedUrlFormat(String url) {
         String error = null;
+        String escapedUrl = escapeUriTemplate(url);
 
         try {
-            URI uri = new URI(url);
+            URI uri = new URI(escapedUrl);
 
             if (!uri.isAbsolute() && !url.startsWith("/")) {
                 error = "URL must be absolute or start with /: " + url;
@@ -294,5 +295,9 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         }
 
         return error;
+    }
+
+    private String escapeUriTemplate(String url) {
+        return url.replace("${", "%24%7B").replace("}", "%7D");
     }
 }

@@ -3,6 +3,7 @@ package com.example.composite.config.interceptor;
 import com.example.composite.model.ResponseTracker;
 import com.example.composite.model.response.SubResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.catalina.connector.ResponseFacade;
 import org.springframework.lang.NonNull;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -27,7 +28,7 @@ public class ResponseInterceptor  implements HandlerInterceptor{
 
     @Override
     public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
-                             @NonNull Object handler) throws Exception {
+                             @NonNull Object handler) {
         return true;
     }
 
@@ -37,7 +38,8 @@ public class ResponseInterceptor  implements HandlerInterceptor{
         Boolean isComposite = (Boolean) request.getAttribute("composite");
 
         if((isComposite == null || !isComposite || request.getRequestURI().equals("/api/composite/execute"))
-                && !(response instanceof SubResponseWrapper)) {
+                && !(response instanceof SubResponseWrapper)
+                && !(request.getRequestURI().equals("/error"))) {
             return;
        }
 
