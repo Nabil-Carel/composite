@@ -171,7 +171,3 @@ The library can automatically register endpoints like:
 ## License
 
 MIT License
-
----
-
-Replace `com.example` and artifact details as needed for your project.
