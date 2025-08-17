@@ -278,6 +278,46 @@ The library can automatically register endpoints like:
 5. **Code Reuse and Performance Gains:** Identical calls can be reused within a composite request.
 6. **Scalable and Maintainable:** Add composite support with a single annotation.
 
+## FAQ
+
+### Why not just use GraphQL?
+
+GraphQL requires rewriting your entire API surface with schemas and resolvers. This library works with your existing REST endpoints - just add one annotation. No learning curve for teams already comfortable with REST, and no migration effort for existing controllers.
+
+### Why not write service layer methods instead?
+
+Service layers create backend-specific aggregations for single use cases. Tomorrow your frontend needs a different data combination, so you write another service method. Then another. This library lets the **frontend decide** what data combinations it needs without requiring backend changes - no more anticipating every possible data composition.
+
+### What about Salesforce's Composite API?
+
+This **is** Salesforce's approach, adapted for Spring Boot. You don't need a Salesforce license or ecosystem - it works with your existing Spring controllers using familiar Spring patterns.
+
+### When should I NOT use this?
+
+- **Simple, independent requests** that don't depend on each other - regular parallel HTTP calls are simpler
+- **Long-running processes** that should be asynchronous or queued
+- **Complex business workflows** that need custom transaction logic or rollback handling
+
+### Can I nest composite requests?
+
+No, composite requests cannot include calls to `/api/composite/execute` to prevent infinite recursion and system instability.
+
+### Is there a limit on batch size?
+
+Yes, there's a configurable maximum number of sub-requests per composite call to prevent resource exhaustion. Large batches should be split into smaller composite requests.
+
+### How does this handle request/response size limits?
+
+Composite requests are subject to normal Spring Boot request size limits (`server.servlet.max-request-size`). Large batches with big payloads may need to be split into smaller composite requests to stay within these limits.
+
+### Does this work with Spring WebFlux or other Java frameworks?
+
+No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). It relies on servlet-based request dispatching and Spring Boot's auto-configuration. Spring WebFlux (reactive) support would require a completely different implementation approach and isn't currently planned.
+
+### What happens if one request in the batch fails?
+
+You get partial results with detailed status information for each sub-request. Failed requests don't cause the entire batch to fail - you receive all successful results along with error details for any failures. There's no automatic rollback (transaction support is planned for future releases).
+
 ## Project Structure
 
 - `src/main/java/com/example/composite/` — Main application code
