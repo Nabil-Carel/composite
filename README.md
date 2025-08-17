@@ -150,8 +150,8 @@ public class AccountController {
     }
 }
 ```
-The `value` parameter specifies the return type for proper JSON deserialization:
-```java
+The `value` parameter specifies the return type for proper JSON deserialization.
+
 ### 2. Send a composite request with dependencies
 
 ```http
