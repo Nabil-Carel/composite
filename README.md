@@ -33,6 +33,72 @@ The goal is to fully replicate the behavior of Salesforce’s Composite API — 
 - Works with existing Spring Boot controllers — no extra wiring.
 - Aggregated error handling and response structure.
 
+## When to Use
+
+This library is ideal for applications that suffer from **chatty API patterns** and need to reduce network round-trips without creating custom aggregation endpoints.
+
+### Perfect Use Cases
+
+**Sequential API Dependencies**
+```javascript
+// Instead of this frontend waterfall:
+const customer = await api.createCustomer(customerData);
+const account = await api.createAccount(customer.id, accountData);
+const order = await api.createOrder(account.id, orderData);
+
+// Do this in one request:
+const result = await api.composite([
+  { method: "POST", url: "/customers", body: customerData, referenceId: "cust" },
+  { method: "POST", url: "/accounts", body: { ...accountData, customerId: "${cust.id}" }, referenceId: "acc" },
+  { method: "POST", url: "/orders", body: { ...orderData, accountId: "${acc.id}" }, referenceId: "order" }
+]);
+```
+
+**Mobile & High-Latency Networks**
+- Your mobile app makes 5+ API calls to render a single screen
+- Users on slow connections experience noticeable delays between requests
+- You want to minimize battery drain from multiple network requests
+
+**Complex Dashboard Loading**
+- Admin dashboards that aggregate data from multiple services
+- Reporting interfaces that need data from several related endpoints
+- Any UI that requires "loading multiple things at once"
+
+### When NOT to Use
+
+**Simple, Independent Requests**
+- If your requests don't depend on each other, regular parallel HTTP calls are simpler
+- Single-endpoint operations don't benefit from composite requests
+
+**Heavy Computational Workloads**
+- Long-running processes that should be asynchronous
+- Operations that benefit from being queued/background processed
+
+**Complex Business Transactions**
+- Multi-step workflows that need custom rollback logic
+- Operations that span multiple databases or external services with specific transaction requirements
+
+### Migration Scenarios
+
+**Replace "Backend for Frontend" Endpoints**
+```java
+// Instead of creating custom aggregation controllers:
+@GetMapping("/dashboard/user/{id}")
+public DashboardData getUserDashboard(@PathVariable String id) {
+    User user = userService.getUser(id);
+    List<Order> orders = orderService.getOrdersByUser(id);
+    List<Invoice> invoices = invoiceService.getInvoicesByUser(id);
+    return new DashboardData(user, orders, invoices);
+}
+
+// Use existing endpoints with composite requests
+```
+
+**Eliminate Frontend Request Waterfalls**
+- Replace chains of dependent `await` calls with single composite requests
+- Reduce frontend complexity by moving orchestration to the backend
+- Improve perceived performance with fewer loading states
+
 ## Security
 
 ⚠️ **Planned Feature — Not Yet Implemented**
@@ -61,8 +127,6 @@ When complete, the Composite Endpoint Library will work within your existing Spr
 
 ## Installation
 
-## Installation
-
 ⚠️ **Work In Progress**
 
 This library is currently not published to a public Maven repository.
@@ -86,7 +150,8 @@ public class AccountController {
     }
 }
 ```
-
+The `value` parameter specifies the return type for proper JSON deserialization:
+```java
 ### 2. Send a composite request with dependencies
 
 ```http
@@ -102,7 +167,7 @@ Content-Type: application/json
     },
     {
       "method": "GET",
-      "url": "/api/orders/{acc1.id}"
+      "url": "/api/orders/${acc1.id}",
       "referenceId": "order1"
     }
   ]
@@ -130,11 +195,61 @@ Content-Type: application/json
 
 ## How It Works
 
-- A request filter intercepts `/api/composite/execute` calls.
-- The library parses subrequests and resolves dependencies between them.
-- Endpoints annotated with `@CompositeEndpoint` are invoked directly on their Spring beans.
-- The engine executes calls in the correct order based on dependencies.
-- All results are returned as one aggregated JSON response.
+The Composite Endpoint Library acts as an intelligent request router that leverages Spring's existing infrastructure rather than creating a custom orchestration engine.
+
+### Request Processing Flow
+
+1. **Request Interception**: A filter intercepts incoming requests to `/api/composite/execute`
+2. **Dependency Analysis**: The library parses subrequests and resolves dependencies between them
+3. **Sequential Execution**: Endpoints annotated with `@CompositeEndpoint` are forwarded to their actual Spring controllers using `dispatcher.forward()`
+4. **Response Capture**: An interceptor captures each controller's response using a custom response wrapper
+5. **Dependency Resolution**: Results are stored in a shared map and referenced by subsequent requests using Spring's property resolution
+6. **Aggregated Response**: All individual results are combined into a single JSON response
+
+### Why This Approach Works
+
+**Debugging is straightforward**: Since each subrequest hits your actual controller methods, you can set breakpoints, view stack traces, and use all your normal debugging tools exactly as you would for direct API calls.
+
+**All Spring features work**: Security filters, validation annotations, exception handlers, and request interceptors all function normally because each subrequest goes through Spring's complete request lifecycle.
+
+**No business logic changes**: Your existing controllers remain unchanged. The library only adds routing and response aggregation on top.
+
+**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and uses Spring's `BeanWrapperImpl` to resolve the `id` property - the same property resolution used throughout the Spring ecosystem.
+
+### Request Flow Example
+
+```
+POST /api/composite/execute
+{
+  "subRequests": [
+    { "method": "GET", "url": "/api/account/123", "referenceId": "acc1" },
+    { "method": "GET", "url": "/api/orders/${acc1.id}", "referenceId": "orders1" }
+  ]
+}
+```
+
+**What happens internally:**
+
+1. Filter intercepts the composite request
+2. First subrequest: `dispatcher.forward()` to `/api/account/123`
+    - Hits `AccountController.getAccount(123)`
+    - Response captured: `{"id": "123", "name": "John Doe"}`
+    - Stored in results map as `acc1`
+3. Second subrequest: `${acc1.id}` resolved to `123` using `BeanWrapperImpl`
+    - URL becomes `/api/orders/123`
+    - `dispatcher.forward()` to `/api/orders/123`
+    - Hits `OrderController.getOrders(123)`
+    - Response captured and stored as `orders1`
+4. Both results returned in aggregated response
+
+### Benefits of This Design
+
+- **Zero custom orchestration**: No need to manually invoke Spring beans or manage transactions
+- **Full Spring compatibility**: Every Spring feature works exactly as expected
+- **Easy testing**: Each endpoint can be unit tested independently
+- **Simple debugging**: Set breakpoints in your actual controller methods
+- **Familiar patterns**: Uses standard Spring property resolution syntax (`${object.property[0].field}`)
+- **Security integration**: When implemented, each subrequest will go through the full Spring Security filter chain
 
 ## Example Endpoints
 

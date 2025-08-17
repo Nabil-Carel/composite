@@ -76,6 +76,6 @@ public class UrlResolver {
             throw new IllegalArgumentException("Failed to resolve property path '" + propertyPath + "' on object '" + objectId + "'", e);
         }
 
-        return value != null ? value.toString() : "";
+        return value != null ? value.toString() : ""; // TODO: return value != null ? URLEncoder.encode(value.toString(), StandardCharsets.UTF_8) : ""; to handle cases like user.name = "John & Jane"
     }
 }
