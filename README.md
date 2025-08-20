@@ -11,19 +11,6 @@ The Composite Endpoint Library for Spring Boot lets you combine multiple REST en
 This library is under active development.  
 The goal is to fully replicate the behavior of Salesforce’s Composite API — including dependent request execution, automatic endpoint discovery, and batch orchestration.
 
-**Currently working:**
-- `@CompositeEndpoint` annotation
-- Automatic endpoint registration
-- Basic composite request parsing and execution
-- Sequential execution for dependent calls
-- Full dependency resolution syntax (Salesforce-style reference IDs)
-
-**Planned / In Progress:**
-- Parallel execution of independent requests
-- More robust error handling & partial failure reporting
-- Advanced request/response transformations
-- Integration with application security — composite requests will execute using the caller’s authentication context, respecting per-endpoint authorization rules.
-
 ## Features
 
 - `@CompositeEndpoint` annotation to opt-in existing endpoints.
@@ -32,6 +19,7 @@ The goal is to fully replicate the behavior of Salesforce’s Composite API — 
 - Execution ordering based on declared dependencies.
 - Works with existing Spring Boot controllers — no extra wiring.
 - Aggregated error handling and response structure.
+- Full dependency resolution syntax (Salesforce-style reference IDs)
 
 ## When to Use
 
@@ -116,14 +104,6 @@ When complete, the Composite Endpoint Library will work within your existing Spr
 - Fine-grained per-subrequest access control logging for auditing.
 - Ability to fail fast when any subrequest is unauthorized, or to return partial results depending on configuration.
 - Optional request-level security policies — e.g., allow only certain endpoints to be part of composite calls.
-
-## Tech Stack
-
-- Java 17+
-- Spring Boot
-- Gradle
-- JUnit 5, Mockito (for testing)
-
 
 ## Installation
 
@@ -317,11 +297,6 @@ No, this library is designed specifically for Spring Boot applications using Spr
 ### What happens if one request in the batch fails?
 
 You get partial results with detailed status information for each sub-request. Failed requests don't cause the entire batch to fail - you receive all successful results along with error details for any failures. There's no automatic rollback (transaction support is planned for future releases).
-
-## Project Structure
-
-- `src/main/java/com/example/composite/` — Main application code
-- `src/test/java/com/example/composite/` — Unit tests
 
 ## License
 
