@@ -1,4 +1,5 @@
 # Composite Endpoint Library
+[View on GitHub](https://github.com/Nabil-Carel/composite)
 
 Batch multiple dependent API calls into a single request — with zero boilerplate.
 
@@ -63,7 +64,7 @@ const result = await api.composite([
 - Operations that benefit from being queued/background processed
 
 **Complex Business Transactions**
-- Multi-step workflows that need custom rollback logic
+- Multistep workflows that need custom rollback logic
 - Operations that span multiple databases or external services with specific transaction requirements
 
 ### Migration Scenarios
@@ -292,7 +293,7 @@ Composite requests are subject to normal Spring Boot request size limits (`serve
 
 ### Does this work with Spring WebFlux or other Java frameworks?
 
-No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). It relies on servlet-based request dispatching and Spring Boot's auto-configuration. Spring WebFlux (reactive) support would require a completely different implementation approach and isn't currently planned.
+No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). It relies on servlet-based request dispatching and Spring Boot's autoconfiguration. Spring WebFlux (reactive) support would require a completely different implementation approach and isn't currently planned.
 
 ### What happens if one request in the batch fails?
 
