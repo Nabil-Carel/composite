@@ -88,8 +88,8 @@ public class CompositeController {
 
     @PostMapping("/testPost")
     @CompositeEndpoint(value = SubResponse.class)
-    public ResponseEntity<SubResponse> getTestPost() {
-        SubResponse subResponse = SubResponse.builder().body("testPost").referenceId("testPost").build();
+    public ResponseEntity<SubResponse> getTestPost(@RequestBody Data data) {
+        SubResponse subResponse = SubResponse.builder().body(String.valueOf(data.id)).referenceId("testPost").build();
         return ResponseEntity.ok(subResponse);
     }
 

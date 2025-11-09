@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.servlet.ServletInputStream;
@@ -17,7 +18,7 @@ import lombok.Setter;
 
 public class SubRequestWrapper extends HttpServletRequestWrapper {
     private final String method;
-    @Setter
+    @Getter
     private final String uri;
     private final byte[] body;
     @Getter
@@ -70,20 +71,12 @@ public class SubRequestWrapper extends HttpServletRequestWrapper {
         };
     }
 
-    private byte[] convertBodyToBytes(Object body, ObjectMapper mapper) {
+    private byte[] convertBodyToBytes(JsonNode body, ObjectMapper mapper) {
         if (body == null) {
             return new byte[0];
         }
 
         try {
-            if (body instanceof byte[]) {
-                return (byte[]) body;
-            }
-
-            if (body instanceof String) {
-                return ((String) body).getBytes(StandardCharsets.UTF_8);
-            }
-
                // Convert object to JSON string using ObjectMapper
             String jsonString = mapper.writeValueAsString(body);
             return jsonString.getBytes(StandardCharsets.UTF_8);

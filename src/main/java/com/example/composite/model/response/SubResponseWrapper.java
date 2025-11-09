@@ -39,10 +39,6 @@ public class SubResponseWrapper extends HttpServletResponseWrapper {
         this.objectMapper = objectMapper;
     }
 
-    public Class<?> getResponseType() {
-        return responseType;
-    }
-
     public Map<String, String> getHeadersAsMap() {
         return super.getHeaderNames().stream()
                 .collect(Collectors.toMap(Function.identity(), super::getHeader));

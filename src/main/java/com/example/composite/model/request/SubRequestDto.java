@@ -42,7 +42,7 @@ public class SubRequestDto {
     @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", message = "Reference ID must be alphanumeric with dashes/underscores, max 50 chars")
     private String referenceId;
 
-    private Object body;
+    private JsonNode body;
 
     @Builder.Default
     @JsonSetter(nulls = Nulls.AS_EMPTY)

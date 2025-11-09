@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentMap;
 
 import com.example.composite.model.ResponseTracker;
 import com.example.composite.model.response.SubResponse;
-import com.example.composite.utils.UrlResolver;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,9 +34,11 @@ import lombok.extern.slf4j.Slf4j;
 public class CompositeRequestServiceImpl implements CompositeRequestService{
     private final ServletContext servletContext;
     private final EndpointRegistry endpointRegistry;
+    @Qualifier("compositeObjectMapper")
     private final ObjectMapper objectMapper;
     private final ConcurrentMap<String, ResponseTracker> responseStore;
     private final CompositeRequestValidator compositeRequestValidator;
+    private final ReferenceResolverService referenceResolver;
 
     public void forwardSubrequest(HttpServletRequest request, SubRequestDto subRequestDto,
             HttpServletResponse response, SecurityContext securityContext, String requestId) throws ServletException, IOException{
@@ -69,8 +71,16 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             return;
         }
 
-        String resolvedUrl = UrlResolver.resolve(subRequest, responseStore.get(requestId));
+        String resolvedUrl = referenceResolver.resolveUrl(subRequest, requestId);
+        referenceResolver.resolveHeaders(subRequest, requestId);
+        referenceResolver.resolveBody(subRequest, requestId);
         String error = compositeRequestValidator.validateResolvedUrlFormat(resolvedUrl);
+
+        if (subRequest.getBody() != null) {
+            log.error("---------------------------------------------------------------");
+            log.error("Subrequest body: {}", subRequest.getBody().toString());
+            log.error("---------------------------------------------------------------");
+        }
 
         if (error != null) {
             SubResponse errorResponse = SubResponse.builder()

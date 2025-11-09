@@ -18,6 +18,7 @@ import com.example.composite.service.CompositeBatchContext;
 import com.example.composite.service.CompositeBatchContextImpl;
 import com.example.composite.service.CompositeRequestValidator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -41,6 +42,7 @@ import lombok.RequiredArgsConstructor;
 public class CompositeRequestFilter implements Filter {
     private final CompositeRequestService compositeRequestService;
     private final CompositeRequestValidator compositeRequestValidator;
+    @Qualifier("compositeObjectMapper")
     private final ObjectMapper objectMapper;
     private final ConcurrentMap<String, ResponseTracker> responseStore;
 
@@ -74,7 +76,6 @@ public class CompositeRequestFilter implements Filter {
             );
 
             batchContext.startInitialRequests();
-
         }
         else {
             servletRequest.setAttribute("errors", errors);

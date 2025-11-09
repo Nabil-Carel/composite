@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentMap;
 @Configuration
 public class Config {
 
-    @Bean
+    @Bean("compositeObjectMapper")
     public ObjectMapper objectMapper(){
         return new ObjectMapper();
     }
