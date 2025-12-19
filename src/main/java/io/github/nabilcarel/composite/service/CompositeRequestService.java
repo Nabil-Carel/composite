@@ -14,7 +14,8 @@ import java.util.concurrent.CompletableFuture;
 public interface CompositeRequestService {
     Mono<Void> forwardSubrequest(
             SubRequest subRequest,
-            String requestId
+            String requestId,
+            HttpServletRequest servletRequest
     );
 
     CompletableFuture<ResponseEntity<CompositeResponse>> execute(HttpServletRequest request, HttpServletResponse response);

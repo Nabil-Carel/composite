@@ -5,6 +5,8 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 @ConfigurationProperties(prefix = "composite")
 @Getter
@@ -67,5 +69,23 @@ public class CompositeProperties {
          * Header name for individual sub-request ID within a composite request.
          */
         private String subRequestIdHeader = "X-Composite-Sub-Request-Id";
+    }
+
+    /**
+     * Security configuration for authentication forwarding.
+     */
+    private Security security = new Security();
+
+    @Getter
+    @Setter
+    public static class Security {
+        /**
+         * Additional authentication headers to forward to subrequests.
+         * Common headers like Authorization and cookies are always forwarded.
+         * Use this to forward custom authentication headers.
+         *
+         * Example: X-Custom-Auth, X-Tenant-ID
+         */
+        private List<String> additionalAuthHeaders = new ArrayList<>();
     }
 }

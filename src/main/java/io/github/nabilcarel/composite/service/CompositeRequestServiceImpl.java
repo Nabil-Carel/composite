@@ -42,12 +42,14 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
     private final CompositeRequestValidator compositeRequestValidator;
     private final ReferenceResolverService referenceResolver;
     private final CompositeProperties properties;
+    private final AuthenticationForwardingService authForwardingService;
     @Qualifier("compositeWebClient")
     private final WebClient webClient;
 
     public Mono<Void> forwardSubrequest(
             SubRequest subRequest,
-            String requestId
+            String requestId,
+            HttpServletRequest servletRequest
     ) {
 
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(
@@ -93,15 +95,18 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             return Mono.empty();
         }
 
-        if(properties.getHeaderInjection().isEnabled()){
-            subRequest.getHeaders().put(properties.getHeaderInjection().getRequestHeader(), requestId);
-            subRequest.getHeaders().put(properties.getHeaderInjection().getSubRequestIdHeader(), subRequest.getReferenceId());
-            subRequest.getHeaders().put(properties.getHeaderInjection().getRequestHeader(), "true");
-        }
-
         WebClient.RequestBodySpec requestBodySpec = webClient.method(HttpMethod.valueOf(subRequest.getMethod()))
                 .uri(resolvedUrl)
-                .headers(httpHeaders -> subRequest.getHeaders().forEach(httpHeaders::add));
+                .headers(httpHeaders -> {
+                    authForwardingService.forwardAuthentication(servletRequest, httpHeaders);
+                    subRequest.getHeaders().forEach(httpHeaders::add);
+
+                    if(properties.getHeaderInjection().isEnabled()){
+                        subRequest.getHeaders().put(properties.getHeaderInjection().getRequestHeader(), requestId);
+                        subRequest.getHeaders().put(properties.getHeaderInjection().getSubRequestIdHeader(), subRequest.getReferenceId());
+                        subRequest.getHeaders().put(properties.getHeaderInjection().getRequestHeader(), "true");
+                    }
+                });
 
         WebClient.RequestHeadersSpec<?> requestSpec = requestBodySpec;
 

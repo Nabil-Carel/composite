@@ -75,7 +75,8 @@ public class CompositeRequestFilter implements Filter {
                 requestCoordinator,
                 requestMap,
                 compositeRequestService,
-                requestId
+                requestId,
+                request
             );
 
             batchContext.startInitialRequests();
