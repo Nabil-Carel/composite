@@ -2,8 +2,11 @@ package io.github.nabilcarel.composite.autoconfigure;
 
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
+import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.filter.CompositeRequestFilter;
+import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.service.*;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +20,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.Ordered;
 
@@ -31,6 +35,15 @@ import java.util.concurrent.ConcurrentMap;
 @ConditionalOnWebApplication
 @EnableConfigurationProperties({CompositeLoopbackProperties.class, CompositeProperties.class})
 @Slf4j
+@Import({
+        CompositeRequestFilter.class,
+        CompositeController.class,
+        EndpointRegistry.class,
+        AuthenticationForwardingServiceImpl.class,
+        CompositeRequestServiceImpl.class,
+        CompositeRequestValidatorImpl.class,
+        ReferenceResolverServiceImpl.class
+})
 public class CompositeAutoConfiguration implements ApplicationListener<ServletWebServerInitializedEvent> {
     private final CompositeProperties properties;
     private int serverPort;

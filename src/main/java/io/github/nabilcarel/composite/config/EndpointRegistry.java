@@ -3,6 +3,7 @@ package io.github.nabilcarel.composite.config;
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
@@ -20,9 +21,11 @@ import java.util.*;
 @Slf4j
 @RequiredArgsConstructor
 public class EndpointRegistry implements ApplicationListener<ApplicationReadyEvent> {
+    private final ApplicationContext applicationContext;
+    @Qualifier("requestMappingHandlerMapping")
+    private final RequestMappingHandlerMapping handlerMapping;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
-    private final ApplicationContext applicationContext;
     private final Map<EndpointPattern, EndpointInfo> availableEndpoints = new HashMap<>();
     private final Map<String, Set<EndpointPattern>> patternsByFirstSegment = new HashMap<>();
 
@@ -45,7 +48,6 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     }
 
     private void discoverEndpoints() {
-        RequestMappingHandlerMapping handlerMapping = applicationContext.getBean(RequestMappingHandlerMapping.class);
         Map<RequestMappingInfo, HandlerMethod> handlerMethods = handlerMapping.getHandlerMethods();
 
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMethods.entrySet()) {

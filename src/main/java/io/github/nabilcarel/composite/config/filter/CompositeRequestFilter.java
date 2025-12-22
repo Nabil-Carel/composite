@@ -104,6 +104,4 @@ public class CompositeRequestFilter implements Filter {
                         SubRequest::getDependencies
                 ));
     }
-
-
 }
