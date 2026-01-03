@@ -1,16 +1,19 @@
 plugins {
-	id 'java'
-	id 'org.springframework.boot' version '3.4.0'
+	id 'java-library'
+    id 'maven-publish'
+	id 'org.springframework.boot' version '3.4.0' apply false
 	id 'io.spring.dependency-management' version '1.1.6'
 }
 
-group = 'com.example'
+group = 'io.github.nabil-carel'
 version = '0.0.1-SNAPSHOT'
 
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(17)
 	}
+    withSourcesJar()
+    withJavadocJar()
 }
 
 configurations {
@@ -23,33 +26,47 @@ repositories {
 	mavenCentral()
 }
 
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.boot:spring-boot-dependencies:3.4.0"
+    }
+}
+
 dependencies {
-	implementation 'org.springframework.boot:spring-boot-starter'
-	implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'com.github.ben-manes.caffeine:caffeine'
-	implementation 'org.springframework:spring-tx'
-	implementation 'org.springframework.boot:spring-boot-starter-aop'
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	implementation 'org.springframework.security:spring-security-core'
+	api 'org.springframework.boot:spring-boot-starter-web'
+    api 'org.springframework.boot:spring-boot-starter-validation'
+    api 'org.springframework.boot:spring-boot-starter-webflux'
 
 
     compileOnly 'org.projectlombok:lombok'
+    compileOnly 'org.springframework.boot:spring-boot-actuator'
     annotationProcessor 'org.projectlombok:lombok'
     annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-
-    runtimeOnly 'com.h2database:h2:2.2.224'
-
-    implementation 'jakarta.servlet:jakarta.servlet-api:6.0.0'
-
 }
 
-tasks.named('test') {
+test {
 	useJUnitPlatform()
 }
 
 tasks.named('compileJava') {
     inputs.files(tasks.named('processResources'))
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+
+            versionMapping {
+                usage('java-api') {
+                    fromResolutionOf('runtimeClasspath')
+                }
+                usage('java-runtime') {
+                    fromResolutionResult()
+                }
+            }
+        }
+    }
 }

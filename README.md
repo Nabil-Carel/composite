@@ -5,12 +5,12 @@ Batch multiple dependent API calls into a single request — with zero boilerpla
 
 ## Overview
 
-The Composite Endpoint Library for Spring Boot lets you combine multiple REST endpoints into one request, similar to Salesforce’s Composite API. It automatically discovers annotated endpoints, executes them in the correct dependency order, and returns a single aggregated response — eliminating the need to manually chain calls in your frontend or create custom aggregation endpoints in your backend.
+The Composite Endpoint Library for Spring Boot lets you combine multiple REST endpoints into one request, similar to Salesforce's Composite API. It automatically discovers annotated endpoints, executes them in the correct dependency order, and returns a single aggregated response — eliminating the need to manually chain calls in your frontend or create custom aggregation endpoints in your backend.
 
 ## Project Status 🚧
 
 This library is under active development.  
-The goal is to fully replicate the behavior of Salesforce’s Composite API — including dependent request execution, automatic endpoint discovery, and batch orchestration.
+The goal is to fully replicate the behavior of Salesforce's Composite API — including dependent request execution, automatic endpoint discovery, and batch orchestration.
 
 ## Features
 
@@ -21,6 +21,7 @@ The goal is to fully replicate the behavior of Salesforce’s Composite API — 
 - Works with existing Spring Boot controllers — no extra wiring.
 - Aggregated error handling and response structure.
 - Full dependency resolution syntax (Salesforce-style reference IDs)
+- Automatic authentication forwarding for all subrequests.
 
 ## When to Use
 
@@ -90,21 +91,44 @@ public DashboardData getUserDashboard(@PathVariable String id) {
 
 ## Security
 
-⚠️ **Planned Feature — Not Yet Implemented**
+✅ **Works with Spring Security out of the box**
 
-Security integration is a core design goal for this library, but it is not available in the current release. Composite requests today do not automatically enforce your Spring Security rules per subrequest — you should only use this in non-sensitive contexts until security features land.
+The Composite Endpoint Library makes real HTTP loopback calls to your endpoints, which means **all your existing Spring Security configuration applies automatically**.
 
-When complete, the Composite Endpoint Library will work within your existing Spring Security configuration:
+**How it works:**
 
-- **Authentication Context** — All subrequests in a composite call will execute under the same `SecurityContext` as the incoming HTTP request.
-- **Authorization Checks** — Standard method-level and URL-based security rules (e.g., `@PreAuthorize`, `@Secured`, or WebSecurity config) will be applied to each subrequest.
-- **No Privilege Escalation** — A composite request will not be able to access endpoints the calling user wouldn’t normally be able to reach individually.
+- **Authentication Forwarding**: The library automatically forwards authentication headers and cookies from the parent composite request to all subrequests
+- **Authorization**: Each subrequest goes through your Spring Security filter chain exactly as a direct HTTP call would
+- **Method Security**: `@PreAuthorize`, `@Secured`, and other method-level annotations work normally
+- **No Privilege Escalation**: Composite requests can only access endpoints the calling user is authorized to access
 
-**Planned Enhancements:**
+**Supported authentication types:**
+- ✅ Bearer tokens (JWT, OAuth2)
+- ✅ Basic Authentication
+- ✅ Session cookies (JSESSIONID)
+- ✅ API keys in headers
+- ✅ Any custom header-based auth
 
-- Fine-grained per-subrequest access control logging for auditing.
-- Ability to fail fast when any subrequest is unauthorized, or to return partial results depending on configuration.
-- Optional request-level security policies — e.g., allow only certain endpoints to be part of composite calls.
+**Example:**
+```java
+@GetMapping("/admin/users")
+@PreAuthorize("hasRole('ADMIN')")
+@CompositeEndpoint(List.class)
+public List<User> getUsers() {
+    // Only accessible to admins
+}
+```
+
+If a non-admin tries to include this endpoint in a composite request, that specific subrequest will fail with 403 Forbidden, while other authorized subrequests succeed.
+
+**Security headers:**
+
+The library automatically injects tracking headers to identify composite-initiated requests:
+- `X-Composite-Request: true`
+- `X-Composite-Request-Id: <unique-id>`
+- `X-Composite-Sub-Request-Id: <reference-id>`
+
+These can be used for auditing, logging, or custom security policies.
 
 ## Installation
 
@@ -118,7 +142,6 @@ Official release and simplified installation instructions will be provided in a 
 ## Usage
 
 ### 1. Annotate your endpoints
-
 ```java
 @RestController
 @RequestMapping("/api")
@@ -134,13 +157,13 @@ public class AccountController {
 The `value` parameter specifies the return type for proper JSON deserialization.
 
 ### 2. Send a composite request with dependencies
-
 ```http
 POST /api/composite/execute
+Authorization: Bearer <your-token>
 Content-Type: application/json
 
 {
-  "subRequests": [
+  "compositeRequest": [
     {
       "method": "GET",
       "url": "/api/account/1",
@@ -156,53 +179,58 @@ Content-Type: application/json
 ```
 
 ### 3. Receive aggregated results
-
 ```json
 {
   "hasErrors": false,
-  "results": [
-    {
+  "responses": {
+    "acc1": {
       "referenceId": "acc1",
-      "status": 200,
+      "httpStatus": 200,
       "body": { "id": "1", "name": "John Doe" }
     },
-    {
-      "status": 200,
+    "order1": {
+      "referenceId": "order1",
+      "httpStatus": 200,
       "body": [ { "orderId": "A123" }, { "orderId": "B456" } ]
     }
-  ]
+  }
 }
 ```
 
 ## How It Works
 
-The Composite Endpoint Library acts as an intelligent request router that leverages Spring's existing infrastructure rather than creating a custom orchestration engine.
+The Composite Endpoint Library acts as an intelligent request orchestrator that coordinates multiple HTTP calls to your existing endpoints.
 
 ### Request Processing Flow
 
 1. **Request Interception**: A filter intercepts incoming requests to `/api/composite/execute`
-2. **Dependency Analysis**: The library parses subrequests and resolves dependencies between them
-3. **Sequential Execution**: Endpoints annotated with `@CompositeEndpoint` are forwarded to their actual Spring controllers using `dispatcher.forward()`
-4. **Response Capture**: An interceptor captures each controller's response using a custom response wrapper
-5. **Dependency Resolution**: Results are stored in a shared map and referenced by subsequent requests using Spring's property resolution
-6. **Aggregated Response**: All individual results are combined into a single JSON response
+2. **Validation**: Validates the composite request structure and checks for circular dependencies
+3. **Dependency Analysis**: Parses subrequests and builds a dependency graph
+4. **Parallel Execution**: Independent requests execute in parallel using WebFlux's `WebClient`
+5. **Loopback Calls**: Each subrequest makes an HTTP call back to `localhost` hitting your actual endpoints
+6. **Response Tracking**: Results are captured and stored, making them available for dependent requests
+7. **Reference Resolution**: Subsequent requests can reference earlier results using `${refId.property}` syntax
+8. **Aggregated Response**: All results are combined into a single JSON response
 
 ### Why This Approach Works
 
-**Debugging is straightforward**: Since each subrequest hits your actual controller methods, you can set breakpoints, view stack traces, and use all your normal debugging tools exactly as you would for direct API calls.
+**Full Spring Security integration**: Each subrequest is a real HTTP call that goes through your complete Spring Security filter chain - authentication, authorization, method security, and custom filters all work exactly as they do for direct requests.
 
-**All Spring features work**: Security filters, validation annotations, exception handlers, and request interceptors all function normally because each subrequest goes through Spring's complete request lifecycle.
+**Debugging is straightforward**: Since each subrequest hits your actual controller methods via HTTP, you can set breakpoints, view stack traces, and use all your normal debugging tools.
 
-**No business logic changes**: Your existing controllers remain unchanged. The library only adds routing and response aggregation on top.
+**All Spring features work**: Validation annotations, exception handlers, request interceptors, and any other Spring MVC features function normally because each subrequest goes through Spring's complete request lifecycle.
 
-**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and uses Spring's `BeanWrapperImpl` to resolve the `id` property - the same property resolution used throughout the Spring ecosystem.
+**No business logic changes**: Your existing controllers remain unchanged. The library only adds orchestration and response aggregation.
+
+**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and uses Jackson's JSON path-like resolution to extract the `id` property.
 
 ### Request Flow Example
-
 ```
 POST /api/composite/execute
+Authorization: Bearer <token>
+
 {
-  "subRequests": [
+  "compositeRequest": [
     { "method": "GET", "url": "/api/account/123", "referenceId": "acc1" },
     { "method": "GET", "url": "/api/orders/${acc1.id}", "referenceId": "orders1" }
   ]
@@ -211,26 +239,31 @@ POST /api/composite/execute
 
 **What happens internally:**
 
-1. Filter intercepts the composite request
-2. First subrequest: `dispatcher.forward()` to `/api/account/123`
+1. Filter intercepts the composite request and validates structure
+2. First subrequest: WebClient makes GET to `http://localhost:8080/api/account/123`
+    - Authorization header automatically forwarded from parent request
+    - Request goes through full Spring Security filter chain
     - Hits `AccountController.getAccount(123)`
     - Response captured: `{"id": "123", "name": "John Doe"}`
     - Stored in results map as `acc1`
-3. Second subrequest: `${acc1.id}` resolved to `123` using `BeanWrapperImpl`
+3. Second subrequest: `${acc1.id}` resolved to `123`
     - URL becomes `/api/orders/123`
-    - `dispatcher.forward()` to `/api/orders/123`
+    - WebClient makes GET to `http://localhost:8080/api/orders/123`
+    - Authorization header forwarded again
+    - Goes through Spring Security again
     - Hits `OrderController.getOrders(123)`
     - Response captured and stored as `orders1`
 4. Both results returned in aggregated response
 
 ### Benefits of This Design
 
-- **Zero custom orchestration**: No need to manually invoke Spring beans or manage transactions
+- **True HTTP calls**: Each subrequest is a real HTTP call with full Spring lifecycle
+- **Security out of the box**: Spring Security filters apply to every subrequest automatically
 - **Full Spring compatibility**: Every Spring feature works exactly as expected
-- **Easy testing**: Each endpoint can be unit tested independently
+- **Easy testing**: Each endpoint can be tested independently as regular HTTP endpoints
 - **Simple debugging**: Set breakpoints in your actual controller methods
-- **Familiar patterns**: Uses standard Spring property resolution syntax (`${object.property[0].field}`)
-- **Security integration**: When implemented, each subrequest will go through the full Spring Security filter chain
+- **Request tracing**: Standard HTTP tracing/monitoring tools work on subrequests
+- **Header injection**: Library adds tracking headers to identify composite-initiated requests
 
 ## Example Endpoints
 
@@ -246,18 +279,17 @@ The library can automatically register endpoints like:
 
 1. **Fewer HTTP Calls, Lower Latency:** Send one composite request instead of many.
 2. **Simplified Frontend Logic:** Declare all needs in one request.
-3. **Improved UI Responsiveness:** Parallel execution supports progressive rendering.
-4. **Frontend-Driven Composition:** Compose existing endpoints as needed.
-5. **Cleaner State Management:** Receive all required data in one snapshot.
+3. **Frontend-Driven Composition:** Compose existing endpoints as needed.
+4. **Cleaner State Management:** Receive all required data in one snapshot.
 
 ## Backend Benefits
 
-1. **No More “Backend for Frontend” Hell:** No need for custom aggregation endpoints.
+1. **No More "Backend for Frontend" Hell:** No need for custom aggregation endpoints.
 2. **Promotes Clean API Design:** Encourages small, focused, reusable endpoints.
 3. **Separation of Concerns:** Orchestration is handled by the library.
 4. **No Coordination Debt:** Decouple frontend and backend release cycles.
 5. **Code Reuse and Performance Gains:** Identical calls can be reused within a composite request.
-6. **Scalable and Maintainable:** Add composite support with a single annotation.
+6. **Easy to Adopt:** Add composite support to existing endpoints with a single `@CompositeEndpoint` annotation - no refactoring required.
 
 ## FAQ
 
@@ -277,15 +309,20 @@ This **is** Salesforce's approach, adapted for Spring Boot. You don't need a Sal
 
 - **Simple, independent requests** that don't depend on each other - regular parallel HTTP calls are simpler
 - **Long-running processes** that should be asynchronous or queued
-- **Complex business workflows** that need custom transaction logic or rollback handling
+**Complex Business Transactions**
+- Operations that require all-or-nothing semantics (if one fails, all must rollback)
+- Distributed transactions across multiple databases
+- Workflows that need compensating transactions
+
+**Note:** Individual endpoints can use `@Transactional` and will rollback on failure, but the composite request itself doesn't provide cross-endpoint transaction management. If subrequest 1 succeeds and subrequest 2 fails, subrequest 1's changes are NOT automatically rolled back.
 
 ### Can I nest composite requests?
 
-No, composite requests cannot include calls to `/api/composite/execute` to prevent infinite recursion and system instability.
+No, composite requests cannot include calls to `/api/composite/execute` to prevent infinite recursion.
 
 ### Is there a limit on batch size?
 
-Yes, there's a configurable maximum number of sub-requests per composite call to prevent resource exhaustion. Large batches should be split into smaller composite requests.
+Yes, the default maximum is 25 sub-requests per composite call (matching Salesforce's limit). This prevents resource exhaustion and can be configured via `composite.max-sub-requests-per-composite`.
 
 ### How does this handle request/response size limits?
 
@@ -293,12 +330,12 @@ Composite requests are subject to normal Spring Boot request size limits (`serve
 
 ### Does this work with Spring WebFlux or other Java frameworks?
 
-No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). It relies on servlet-based request dispatching and Spring Boot's autoconfiguration. Spring WebFlux (reactive) support would require a completely different implementation approach and isn't currently planned.
+No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). While it uses WebFlux's `WebClient` internally for making HTTP calls, the library itself requires servlet-based request handling. Pure Spring WebFlux (reactive) applications are not currently supported.
 
 ### What happens if one request in the batch fails?
 
-You get partial results with detailed status information for each sub-request. Failed requests don't cause the entire batch to fail - you receive all successful results along with error details for any failures. There's no automatic rollback (transaction support is planned for future releases).
+You get partial results with detailed status information for each sub-request. Failed requests don't cause the entire batch to fail - you receive all successful results along with error details for any failures. There's no automatic rollback.
 
 ## License
 
-MIT License
+Apache License 2.0
