@@ -1,9 +1,8 @@
 package io.github.nabilcarel.composite.exception;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import lombok.Getter;
 
-@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+@Getter
 public class CompositeExecutionException extends RuntimeException {
     private final String referenceId;
     
@@ -20,9 +19,5 @@ public class CompositeExecutionException extends RuntimeException {
     public CompositeExecutionException(String message, String referenceId, Throwable cause) {
         super(message, cause);
         this.referenceId = referenceId;
-    }
-
-    public String getReferenceId() {
-        return referenceId;
     }
 }

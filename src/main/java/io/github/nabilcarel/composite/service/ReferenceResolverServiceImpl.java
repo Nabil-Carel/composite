@@ -1,5 +1,7 @@
 package io.github.nabilcarel.composite.service;
 
+import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
+import io.github.nabilcarel.composite.exception.UnresolvedReferenceException;
 import io.github.nabilcarel.composite.model.NodeReference;
 import io.github.nabilcarel.composite.model.PlaceholderResolution;
 import io.github.nabilcarel.composite.model.ResponseTracker;
@@ -7,6 +9,7 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
+import io.github.nabilcarel.composite.model.response.SubResponse;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -79,7 +82,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
                     nodeRef.overrideValue(node);
                 } else {
                     // Still has unresolved placeholders
-                    throw new IllegalArgumentException("Could not fully resolve placeholder: " + text);
+                    throw new ReferenceResolutionException("Could not fully resolve placeholder", text);
                 }
             }
             else {
@@ -132,7 +135,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
                 String replacement = getResolvedValue(placeholder.getRoot(), placeholder.getObjectId(),
                         placeholder.getPropertyPath());
                 matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
-            } catch (Exception e) {
+            } catch (UnresolvedReferenceException e) {
                 // Leave unresolved placeholders as-is for next iteration
                 matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
             }
@@ -205,6 +208,13 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
      * - config['database.host'] -> objectId="config", propertyPath="['database.host']"
      */
     private PlaceholderResolution parseExpression(String expression, String batchId) {
+        // If expression still contains ${}, it's not fully resolved yet
+        if (PLACEHOLDER_PATTERN.matcher(expression).find()) {
+            throw new UnresolvedReferenceException(
+                    "Expression contains unresolved placeholders: " + expression
+            );
+        }
+
         // Find the root object name (everything before first . or [)
         String objectId;
         String propertyPath;
@@ -236,10 +246,39 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             }
         }
 
-        Object root = responseStore.get(batchId).getSubResponseMap().get(objectId).getBody();
+        ResponseTracker tracker = responseStore.get(batchId);
+
+        if(tracker == null) {
+            throw new ReferenceResolutionException(
+                    "No responses found for batch ID: " + batchId,
+                    objectId
+            );
+        }
+
+        Map<String, SubResponse> subResponseMap = tracker.getSubResponseMap();
+
+        if (subResponseMap == null) {
+            throw new IllegalArgumentException("Response map not initialized for batch ID: " + batchId);
+        }
+
+        SubResponse subResponse = subResponseMap.get(objectId);
+
+        if (subResponse == null) {
+            throw new ReferenceResolutionException(
+                    "No response found for reference ID: " + objectId,
+                    objectId,
+                    String.join(", ", subResponseMap.keySet())
+            );
+        }
+
+        Object root = subResponse.getBody();
 
         if (root == null) {
-            throw new IllegalArgumentException("No response body found for reference ID: " + objectId);
+            throw new ReferenceResolutionException(
+                    "No response body found for reference ID: " + objectId,
+                    objectId,
+                    String.join(", ", responseStore.get(batchId).getSubResponseMap().keySet())
+            );
         }
 
         if (propertyPath != null && propertyPath.startsWith("[") && propertyPath.endsWith("]")) {

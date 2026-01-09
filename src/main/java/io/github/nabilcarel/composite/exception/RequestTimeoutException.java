@@ -1,10 +1,10 @@
 package io.github.nabilcarel.composite.exception;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import lombok.Getter;
+
 import java.time.Duration;
 
-@ResponseStatus(HttpStatus.REQUEST_TIMEOUT)
+@Getter
 public class RequestTimeoutException extends RuntimeException {
     private final Duration timeout;
     private final String referenceId;
@@ -19,13 +19,5 @@ public class RequestTimeoutException extends RuntimeException {
         super(message);
         this.timeout = timeout;
         this.referenceId = referenceId;
-    }
-
-    public Duration getTimeout() {
-        return timeout;
-    }
-
-    public String getReferenceId() {
-        return referenceId;
     }
 }

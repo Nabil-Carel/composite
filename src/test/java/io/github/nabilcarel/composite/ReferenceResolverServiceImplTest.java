@@ -1,6 +1,7 @@
 package io.github.nabilcarel.composite;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
@@ -21,7 +22,6 @@ import java.util.concurrent.ConcurrentMap;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@Disabled
 @ExtendWith(MockitoExtension.class)
 class ReferenceResolverServiceImplTest {
 
@@ -97,15 +97,14 @@ class ReferenceResolverServiceImplTest {
     @Test
     void testResolveBody_withNoNodeReferences() {
         subRequest.getNodeReferences().addAll(Collections.emptyList());
-        referenceResolverService.resolveBody(subRequest, batchId);
-        // No exception should be thrown, nothing to resolve
+        assertDoesNotThrow(() -> referenceResolverService.resolveBody(subRequest, batchId));
     }
 
     @Test
     void testResolveUrl_invalidPlaceholder_throwsException() {
         createStubs();
         subRequest.setUrl("http://test.com/api/${invalid}");
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+        ReferenceResolutionException ex = assertThrows(ReferenceResolutionException.class, () ->
                 referenceResolverService.resolveUrl(subRequest, batchId));
         assertTrue(ex.getMessage().contains("Invalid placeholder"));
     }

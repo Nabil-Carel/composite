@@ -1,10 +1,8 @@
 package io.github.nabilcarel.composite.exception;
 
+import lombok.Getter;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
-
-@ResponseStatus(HttpStatus.BAD_REQUEST)
+@Getter
 public class ReferenceResolutionException extends RuntimeException {
     private final String reference;
     private final String availableReferences;
@@ -19,13 +17,5 @@ public class ReferenceResolutionException extends RuntimeException {
         super(message);
         this.reference = reference;
         this.availableReferences = availableReferences;
-    }
-
-    public String getReference() {
-        return reference;
-    }
-
-    public String getAvailableReferences() {
-        return availableReferences;
     }
 }
