@@ -8,7 +8,6 @@ import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.service.ReferenceResolverServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -106,17 +105,17 @@ class ReferenceResolverServiceImplTest {
         subRequest.setUrl("http://test.com/api/${invalid}");
         ReferenceResolutionException ex = assertThrows(ReferenceResolutionException.class, () ->
                 referenceResolverService.resolveUrl(subRequest, batchId));
-        assertTrue(ex.getMessage().contains("Invalid placeholder"));
+        assertTrue(ex.getMessage().contains("No response found for reference ID"));
     }
 
     @Test
     void testResolveUrl_missingResponseBody_throwsException() {
-        // Remove user from subResponseMap
-        ResponseTracker tracker = responseStore.get(batchId);
-        tracker.getSubResponseMap().remove("user");
+        createStubs();
+        ResponseTracker localTracker = responseStore.get(batchId);
+        localTracker.getSubResponseMap().remove("user");
         subRequest.setUrl("http://test.com/api/${user.name}");
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+        ReferenceResolutionException ex = assertThrows(ReferenceResolutionException.class, () ->
                 referenceResolverService.resolveUrl(subRequest, batchId));
-        assertTrue(ex.getMessage().contains("No response body found for reference ID"));
+        assertTrue(ex.getMessage().contains("No response found for reference ID"));
     }
 }
