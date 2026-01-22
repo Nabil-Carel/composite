@@ -7,16 +7,15 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor

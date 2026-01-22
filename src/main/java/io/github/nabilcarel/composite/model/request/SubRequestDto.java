@@ -1,21 +1,15 @@
 package io.github.nabilcarel.composite.model.request;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.databind.JsonNode;
-
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;

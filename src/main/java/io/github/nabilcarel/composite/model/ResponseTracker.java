@@ -2,7 +2,6 @@ package io.github.nabilcarel.composite.model;
 
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;

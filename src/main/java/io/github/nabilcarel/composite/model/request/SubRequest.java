@@ -1,18 +1,18 @@
 package io.github.nabilcarel.composite.model.request;
 
-import io.github.nabilcarel.composite.model.NodeReference;
-import io.github.nabilcarel.composite.model.ObjectFieldReference;
-import io.github.nabilcarel.composite.model.ArrayElementReference;
+import static io.github.nabilcarel.composite.util.Patterns.DEPENDENCY_SPLIT_PATTERN;
+import static io.github.nabilcarel.composite.util.Patterns.PLACEHOLDER_PATTERN;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import lombok.*;
-import lombok.experimental.Delegate;
-
-
+import io.github.nabilcarel.composite.model.ArrayElementReference;
+import io.github.nabilcarel.composite.model.NodeReference;
+import io.github.nabilcarel.composite.model.ObjectFieldReference;
 import java.util.*;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import lombok.*;
+import lombok.experimental.Delegate;
 
 @RequiredArgsConstructor
 @Getter
@@ -24,7 +24,6 @@ public class SubRequest {
     private Map<String, String> resolvedHeaders;
     private Set<String> dependencies = new HashSet<>();
     private List<NodeReference> nodeReferences = new ArrayList<>();
-    private static final Pattern REFERENCE_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}");
 
     public Set<String> getDependencies() {
         if(dependencies.isEmpty()) {
@@ -37,23 +36,23 @@ public class SubRequest {
     }
 
     private void extractDependenciesFromUrl() {
-        Matcher matcher = REFERENCE_PATTERN
+        Matcher matcher = PLACEHOLDER_PATTERN
                 .matcher(subRequestDto.getUrl());
 
         while (matcher.find()) {
             String reference = matcher.group(1);
-            String refId = reference.split("\\.")[0];
-            dependencies.add(refId);
+            reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
+            dependencies.add(reference);
         }
     }
 
     private void extractDependenciesFromHeaders() {
         for (String headerValue : subRequestDto.getHeaders().values()) {
-            Matcher matcher = REFERENCE_PATTERN.matcher(headerValue);
+            Matcher matcher = PLACEHOLDER_PATTERN.matcher(headerValue);
 
             while (matcher.find()) {
                 String reference = matcher.group(1);
-                String refId = reference.split("\\.")[0];
+                String refId = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
                 dependencies.add(refId);
             }
         }
@@ -71,12 +70,12 @@ public class SubRequest {
                 JsonNode child = entry.getValue();
 
                 if (child.isTextual()) {
-                    Matcher matcher = REFERENCE_PATTERN.matcher(child.asText());
+                    Matcher matcher = PLACEHOLDER_PATTERN.matcher(child.asText());
 
                     while (matcher.find()) {
                         String reference = matcher.group(1);
-                        String refId = reference.split("\\.")[0];
-                        dependencies.add(refId);
+                        reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
+                        dependencies.add(reference);
 
                         // store reference to replace later
                         nodeReferences.add(new ObjectFieldReference(obj, entry.getKey()));
@@ -92,12 +91,12 @@ public class SubRequest {
                 JsonNode child = arr.get(i);
 
                 if (child.isTextual()) {
-                    Matcher matcher = REFERENCE_PATTERN.matcher(child.asText());
+                    Matcher matcher = PLACEHOLDER_PATTERN.matcher(child.asText());
 
                     while (matcher.find()) {
                         String reference = matcher.group(1);
-                        String refId = reference.split("\\.")[0];
-                        dependencies.add(refId);
+                        reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
+                        dependencies.add(reference);
 
                         // store reference to replace later
                         nodeReferences.add(new ArrayElementReference(arr, i));

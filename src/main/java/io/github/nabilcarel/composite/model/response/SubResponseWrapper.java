@@ -1,9 +1,10 @@
 package io.github.nabilcarel.composite.model.response;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
-import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -11,14 +12,8 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import jakarta.servlet.ServletOutputStream;
-import jakarta.servlet.WriteListener;
-import jakarta.servlet.http.HttpServletResponse;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class SubResponseWrapper extends HttpServletResponseWrapper {

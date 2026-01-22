@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
@@ -7,9 +8,14 @@ import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,13 +28,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 
 @Service
 @Lazy

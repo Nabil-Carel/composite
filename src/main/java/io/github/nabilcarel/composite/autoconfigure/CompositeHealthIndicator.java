@@ -2,13 +2,12 @@ package io.github.nabilcarel.composite.autoconfigure;
 
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.model.ResponseTracker;
+import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.stereotype.Component;
-
-import java.util.concurrent.ConcurrentMap;
 
 @Component
 @ConditionalOnClass(HealthIndicator.class)

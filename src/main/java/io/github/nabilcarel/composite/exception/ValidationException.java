@@ -8,19 +8,19 @@ import java.util.List;
 
 @ResponseStatus(HttpStatus.BAD_REQUEST)
 public class ValidationException extends RuntimeException {
-    private final List<List<String>> violations;
+  private final List<List<String>> violations;
 
-    public ValidationException(String message) {
-        super(message);
-        this.violations = Collections.emptyList();
-    }
+  public ValidationException(String message) {
+    super(message);
+    this.violations = Collections.emptyList();
+  }
 
-    public ValidationException(String message, List<List<String>> violations) {
-        super(message);
-        this.violations = violations;
-    }
+  public ValidationException(String message, List<List<String>> violations) {
+    super(message);
+    this.violations = violations;
+  }
 
-    public List<List<String>> getViolations() {
-        return violations;
-    }
+  public List<List<String>> getViolations() {
+    return violations;
+  }
 }

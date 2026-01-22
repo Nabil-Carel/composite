@@ -4,11 +4,10 @@ import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.SubRequestCoordinator;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.Getter;
-import reactor.core.publisher.Mono;
-
 import java.util.List;
 import java.util.Map;
+import lombok.Getter;
+import reactor.core.publisher.Mono;
 
 public class CompositeBatchContextImpl implements CompositeBatchContext {
     @Getter

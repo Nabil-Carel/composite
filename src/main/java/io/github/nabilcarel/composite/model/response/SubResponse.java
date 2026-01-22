@@ -1,8 +1,7 @@
 package io.github.nabilcarel.composite.model.response;
 
-import lombok.*;
-
 import java.util.Map;
+import lombok.*;
 
 @Getter
 @Setter

@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.autoconfigure;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
@@ -8,6 +9,8 @@ import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
 import io.netty.channel.ChannelOption;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -18,17 +21,12 @@ import org.springframework.boot.web.servlet.context.ServletWebServerInitializedE
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.Ordered;
-
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 @Configuration
 @RequiredArgsConstructor

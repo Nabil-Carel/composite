@@ -5,11 +5,10 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.http.ResponseEntity;
-import reactor.core.publisher.Mono;
-
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import org.springframework.http.ResponseEntity;
+import reactor.core.publisher.Mono;
 
 public interface CompositeRequestService {
     Mono<Void> forwardSubrequest(

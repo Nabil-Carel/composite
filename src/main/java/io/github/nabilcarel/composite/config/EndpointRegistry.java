@@ -1,6 +1,7 @@
 package io.github.nabilcarel.composite.config;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
+import java.util.*;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -15,8 +16,6 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-import java.util.*;
-
 @Component
 @Slf4j
 @RequiredArgsConstructor
@@ -28,19 +27,6 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
     private final Map<EndpointPattern, EndpointInfo> availableEndpoints = new HashMap<>();
     private final Map<String, Set<EndpointPattern>> patternsByFirstSegment = new HashMap<>();
-
-    @Getter
-    @Setter
-    @AllArgsConstructor
-    public static class EndpointPattern {
-        private String method;
-        private String pattern;
-
-        @Override
-        public String toString() {
-            return method + " " + pattern;
-        }
-    }
 
     @Override
     public void onApplicationEvent(@NonNull ApplicationReadyEvent event) {
@@ -112,6 +98,19 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
 
     public Set<EndpointInfo> getAvailableEndpoints() {
         return new HashSet<>(availableEndpoints.values());
+    }
+
+    @Getter
+    @Setter
+    @AllArgsConstructor
+    public static class EndpointPattern {
+        private String method;
+        private String pattern;
+
+        @Override
+        public String toString() {
+            return method + " " + pattern;
+        }
     }
 
     @Getter

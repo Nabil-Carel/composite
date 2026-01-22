@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.config.filter;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
 import io.github.nabilcarel.composite.model.SubRequestCoordinator;
@@ -11,15 +12,8 @@ import io.github.nabilcarel.composite.service.CompositeBatchContext;
 import io.github.nabilcarel.composite.service.CompositeBatchContextImpl;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
 import io.github.nabilcarel.composite.service.CompositeRequestValidator;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +22,11 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationContext;
+import org.springframework.stereotype.Component;
 
 @RequiredArgsConstructor
 @Component

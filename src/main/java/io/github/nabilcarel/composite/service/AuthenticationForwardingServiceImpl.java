@@ -3,13 +3,11 @@ package io.github.nabilcarel.composite.service;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
-
-import java.util.Arrays;
-import java.util.stream.Collectors;
-
 
 @Service
 @RequiredArgsConstructor

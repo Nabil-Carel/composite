@@ -1,12 +1,11 @@
 package io.github.nabilcarel.composite.config;
 
-import lombok.Getter;
-import lombok.Setter;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "composite")
 @Getter
@@ -46,6 +45,10 @@ public class CompositeProperties {
      * Header injection configuration for tracking composite sub-requests.
      */
     private HeaderInjection headerInjection = new HeaderInjection();
+    /**
+     * Security configuration for authentication forwarding.
+     */
+    private Security security = new Security();
 
     @Getter
     @Setter
@@ -70,11 +73,6 @@ public class CompositeProperties {
          */
         private String subRequestIdHeader = "X-Composite-Sub-Request-Id";
     }
-
-    /**
-     * Security configuration for authentication forwarding.
-     */
-    private Security security = new Security();
 
     @Getter
     @Setter

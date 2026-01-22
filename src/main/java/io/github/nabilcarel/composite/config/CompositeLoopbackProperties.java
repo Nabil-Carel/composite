@@ -1,10 +1,9 @@
 package io.github.nabilcarel.composite.config;
 
+import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-
-import java.time.Duration;
 
 @ConfigurationProperties(prefix = "composite.loopback")
 @Getter

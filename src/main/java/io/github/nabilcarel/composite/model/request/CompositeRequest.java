@@ -2,9 +2,8 @@ package io.github.nabilcarel.composite.model.request;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
-import lombok.*;
-
 import java.util.List;
+import lombok.*;
 
 @Getter
 @Setter

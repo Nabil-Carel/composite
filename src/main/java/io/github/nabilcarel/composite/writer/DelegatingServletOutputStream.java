@@ -1,9 +1,8 @@
 package io.github.nabilcarel.composite.writer;
 
-import java.io.IOException;
-
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.WriteListener;
+import java.io.IOException;
 
 public abstract class DelegatingServletOutputStream extends ServletOutputStream {
     private final ServletOutputStream delegate;

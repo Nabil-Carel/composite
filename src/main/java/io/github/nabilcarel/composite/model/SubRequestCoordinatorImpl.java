@@ -1,63 +1,18 @@
 package io.github.nabilcarel.composite.model;
 
-import lombok.Getter;
-
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import lombok.Getter;
 
 public class SubRequestCoordinatorImpl implements SubRequestCoordinator {
 
-    public enum State {
-        PENDING,
-        IN_PROGRESS,
-        RESOLVED
-    }
-
-    public static class SubRequestNode {
-        private final String id;
-        private final Set<String> dependsOn;
-        @Getter
-        private final Set<String> dependents = new HashSet<>();
-        private final AtomicInteger remainingDependencies;
-        private final AtomicReference<State> state = new AtomicReference<>(State.PENDING);
-
-        public SubRequestNode(String id, Set<String> dependsOn) {
-            this.id = id;
-            this.dependsOn = dependsOn;
-            this.remainingDependencies = new AtomicInteger(dependsOn.size());
-        }
-
-        public void addDependent(String dependentId) {
-            dependents.add(dependentId);
-        }
-
-        public int onDependencyResolved() {
-            return remainingDependencies.decrementAndGet();
-        }
-
-        public int getRemainingDependencies() {
-            return remainingDependencies.get();
-        }
-
-        public State getState() {
-            return state.get();
-        }
-
-        public boolean markInProgress() {
-            return state.compareAndSet(State.PENDING, State.IN_PROGRESS);
-        }
-
-        public boolean markResolved() {
-            return state.compareAndSet(State.IN_PROGRESS, State.RESOLVED);
-        }
-    }
-
     private final Map<String, SubRequestNode> nodes = new ConcurrentHashMap<>();
 
-    public SubRequestCoordinatorImpl(Map<String, Set<String>> dependencies) {
+    public
+    SubRequestCoordinatorImpl(Map<String, Set<String>> dependencies) {
         init(dependencies);
         buildDependencyGraph();
     }
@@ -119,5 +74,50 @@ public class SubRequestCoordinatorImpl implements SubRequestCoordinator {
 
     public boolean isBatchResolved() {
         return nodes.values().stream().allMatch(n -> n.getState() == State.RESOLVED);
+    }
+
+    public enum State {
+        PENDING,
+        IN_PROGRESS,
+        RESOLVED
+    }
+
+    public static class SubRequestNode {
+        private final String id;
+        private final Set<String> dependsOn;
+        @Getter
+        private final Set<String> dependents = new HashSet<>();
+        private final AtomicInteger remainingDependencies;
+        private final AtomicReference<State> state = new AtomicReference<>(State.PENDING);
+
+        public SubRequestNode(String id, Set<String> dependsOn) {
+            this.id = id;
+            this.dependsOn = dependsOn;
+            this.remainingDependencies = new AtomicInteger(dependsOn.size());
+        }
+
+        public void addDependent(String dependentId) {
+            dependents.add(dependentId);
+        }
+
+        public int onDependencyResolved() {
+            return remainingDependencies.decrementAndGet();
+        }
+
+        public int getRemainingDependencies() {
+            return remainingDependencies.get();
+        }
+
+        public State getState() {
+            return state.get();
+        }
+
+        public boolean markInProgress() {
+            return state.compareAndSet(State.PENDING, State.IN_PROGRESS);
+        }
+
+        public boolean markResolved() {
+            return state.compareAndSet(State.IN_PROGRESS, State.RESOLVED);
+        }
     }
 }

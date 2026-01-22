@@ -1,34 +1,35 @@
 package io.github.nabilcarel.composite.service;
 
+import static io.github.nabilcarel.composite.util.Patterns.*;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.TextNode;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.exception.UnresolvedReferenceException;
 import io.github.nabilcarel.composite.model.NodeReference;
 import io.github.nabilcarel.composite.model.PlaceholderResolution;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.TextNode;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
-
-import org.springframework.beans.BeanWrapperImpl;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.stereotype.Service;
-
+import java.lang.reflect.Array;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.BeanWrapperImpl;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
-    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
     //TODO: Make configurable
     private static final int MAX_RESOLUTION_ITERATIONS = 10;
 
@@ -38,6 +39,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
     public String resolveUrl(SubRequest subRequest, String batchId) {
         String url = resolveNestedPlaceholders(subRequest.getUrl(), batchId);
+        url = UriComponentsBuilder.fromUriString(url).build().encode().toUriString();
         subRequest.setResolvedUrl(url);
         return url;
     }
@@ -125,8 +127,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
      */
     private String resolveSinglePass(String input, String batchId) {
         // Find innermost placeholders first (those without nested ${})
-        Pattern innermostPattern = Pattern.compile("\\$\\{([^${}]+)\\}");
-        Matcher matcher = innermostPattern.matcher(input);
+        Matcher matcher = INNERMOST_PATTERN.matcher(input);
         StringBuffer result = new StringBuffer();
 
         while (matcher.find()) {
@@ -174,11 +175,12 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
         if (root instanceof Map) {
             return handleMapAccess((Map<?, ?>) root, propertyPath);
-        } else if (root instanceof Collection) {
-            return handleCollectionAccess((Collection<?>) root, propertyPath);
         } else if (root.getClass().isArray()) {
-            return handleArrayAccess(root, propertyPath);
-        } else {
+            return handleArrayAccess(root, propertyPath, objectId);
+        } else if (root instanceof Collection) {
+            return handleCollectionAccess((Collection<?>) root, propertyPath, objectId);
+        }
+        else {
 
             BeanWrapperImpl wrapper = new BeanWrapperImpl(root);
             Object value;
@@ -281,61 +283,163 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             );
         }
 
-        if (propertyPath != null && propertyPath.startsWith("[") && propertyPath.endsWith("]")) {
+       // if (propertyPath != null && propertyPath.startsWith("[") && propertyPath.endsWith("]")) {
             // Just remove the brackets: [database.host] -> database.host
-            propertyPath = propertyPath.substring(1, propertyPath.length() - 1);
-        }
+         //   propertyPath = propertyPath.substring(1, propertyPath.length() - 1);
+        //}
 
         return new PlaceholderResolution(objectId, propertyPath, root);
     }
 
     private Object handleMapAccess(Map<?, ?> map, String propertyPath) {
-        // Simple case: direct key access
-        if (!propertyPath.contains(".")) {
+        // Handle bracket notation for literal keys: ['key'] or ["key"]
+        if (propertyPath.startsWith("['") || propertyPath.startsWith("[\"")) {
+            char quoteChar = propertyPath.charAt(1);  // ' or "
+            String closingBracket = quoteChar + "]";
+            int endIndex = propertyPath.indexOf(closingBracket);
+
+            if (endIndex == -1) {
+                throw new IllegalArgumentException("Unclosed bracket notation in: " + propertyPath);
+            }
+
+            // Extract literal key: ['database.host'] -> "database.host"
+            String literalKey = propertyPath.substring(2, endIndex);
+            Object value = map.get(literalKey);
+
+            if (value == null) {
+                return null;
+            }
+
+            // Check for remaining path after ['key']
+            if (endIndex + 2 < propertyPath.length()) {
+                String remainingPath = propertyPath.substring(endIndex + 2);
+                if (remainingPath.startsWith(".")) {
+                    remainingPath = remainingPath.substring(1);
+                }
+                return getResolvedObject(value, literalKey, remainingPath);
+            }
+
+            return value;
+        }
+
+        // Handle dot notation (nested access)
+        int dotIndex = propertyPath.indexOf('.');
+
+        if (dotIndex == -1) {
+            // Simple key, no nesting
             return map.get(propertyPath);
         }
 
-        // Nested path: user.address.city
-        String[] parts = propertyPath.split("\\.", 2);
-        Object value = map.get(parts[0]);
+        // Split on first dot
+        String firstKey = propertyPath.substring(0, dotIndex);
+        Object value = map.get(firstKey);
 
         if (value == null) {
             return null;
         }
 
-        // Recursively resolve the rest of the path
-        return getResolvedObject(value, parts[0], parts[1]);
+        // Recursively resolve remaining path
+        String remainingPath = propertyPath.substring(dotIndex + 1);
+        return getResolvedObject(value, firstKey, remainingPath);
     }
 
-    private Object handleCollectionAccess(Collection<?> collection, String propertyPath) {
-        // Collections need index access: "0", "1", etc.
-        try {
-            int index = Integer.parseInt(propertyPath);
+    private Object handleCollectionAccess(Collection<?> collection, String propertyPath, String objectId) {
+        // propertyPath could be "[0]" or "[0].id" or "[0].users[1].name"
+        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
 
+        if (!matcher.find()) {
+            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
+        }
+
+        try {
+            int index = Integer.parseInt(matcher.group(1));
+
+            // Get element at index
+            Object element;
             if (collection instanceof List) {
-                return ((List<?>) collection).get(index);
+                element = ((List<?>) collection).get(index);
             } else {
                 // For Set/other collections, iterate to index
                 int i = 0;
+                element = null;
                 for (Object item : collection) {
-                    if (i == index) return item;
+                    if (i == index) {
+                        element = item;
+                        break;
+                    }
                     i++;
                 }
-                throw new IndexOutOfBoundsException("Index " + index + " out of bounds");
+                if (element == null) {
+                    throw new IndexOutOfBoundsException("Index " + index + " out of bounds");
+                }
             }
+
+            // Extract remaining path after "[0]"
+            Optional<String> remainingPath = extractRemainingPath(propertyPath);
+
+            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
+                // Recursively resolve - handles any type (Map, List, Array, POJO)
+                return getResolvedObject(element, objectId, remainingPath.get());
+            }
+
+            // Just "[0]", no more path
+            return element;
+
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Collections require numeric index, got: " + propertyPath);
         }
     }
 
-    private Object handleArrayAccess(Object array, String propertyPath) {
+    private Object handleArrayAccess(Object array, String propertyPath, String objectId) {
+        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
+
+        if (!matcher.find()) {
+            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
+        }
+
         try {
-            int index = Integer.parseInt(propertyPath);
-            return java.lang.reflect.Array.get(array, index);
+            int index = Integer.parseInt(matcher.group(1));
+            Object element = Array.get(array, index);
+
+            // Extract remaining path after "[0]"
+            Optional<String> remainingPath = extractRemainingPath(propertyPath);
+
+            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
+                // Recursively resolve - handles any type (Map, List, Array, POJO)
+                return getResolvedObject(element, objectId, remainingPath.get());
+            }
+
+            return element;
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Arrays require numeric index, got: " + propertyPath);
         } catch (ArrayIndexOutOfBoundsException e) {
             throw new IllegalArgumentException("Array index out of bounds: " + propertyPath);
         }
+    }
+
+    private Optional<String> extractRemainingPath(String propertyPath) {
+        // propertyPath examples:
+        // "[0]" → return null or ""
+        // "[0].id" → return "id"
+        // "[0].users[1].name" → return "users[1].name"
+
+        int closeBracket = propertyPath.indexOf(']');
+
+        if (closeBracket == -1) {
+            return Optional.empty();  // No bracket found
+        }
+
+        if (closeBracket >= propertyPath.length() - 1) {
+            return Optional.empty();  // Nothing after the bracket
+        }
+
+        String remaining = propertyPath.substring(closeBracket + 1);
+
+        // Remove leading dot if present
+        if (remaining.startsWith(".")) {
+            remaining = remaining.substring(1);
+        }
+
+        return Optional.of(remaining);
     }
 }

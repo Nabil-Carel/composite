@@ -1,8 +1,7 @@
 package io.github.nabilcarel.composite.exception;
 
-import lombok.Getter;
-
 import java.time.Duration;
+import lombok.Getter;
 
 @Getter
 public class RequestTimeoutException extends RuntimeException {

@@ -6,15 +6,14 @@ import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 @RestController
 @Lazy

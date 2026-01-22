@@ -8,7 +8,7 @@ import lombok.Setter;
 @Setter
 @AllArgsConstructor
 public class PlaceholderResolution {
-    private final String objectId;
-    private final String propertyPath;
-    private final Object root;
+  private final String objectId;
+  private final String propertyPath;
+  private final Object root;
 }
