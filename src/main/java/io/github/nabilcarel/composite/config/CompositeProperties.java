@@ -46,9 +46,16 @@ public class CompositeProperties {
      */
     private HeaderInjection headerInjection = new HeaderInjection();
     /**
-     * Security configuration for authentication forwarding.
+     * Maximum number of resolution iterations for nested placeholders.
+     * Prevents infinite loops in circular reference scenarios.
      */
-    private Security security = new Security();
+    private int maxResolutionIterations = 10;
+
+    /**
+     * Timeout for individual sub-requests.
+     * If not set, uses the overall request timeout.
+     */
+    private Duration subRequestTimeout;
 
     @Getter
     @Setter
@@ -74,16 +81,17 @@ public class CompositeProperties {
         private String subRequestIdHeader = "X-Composite-Sub-Request-Id";
     }
 
+    private Security security = new Security();
+
     @Getter
     @Setter
     public static class Security {
         /**
-         * Additional authentication headers to forward to subrequests.
-         * Common headers like Authorization and cookies are always forwarded.
-         * Use this to forward custom authentication headers.
+         * Headers to forward from the original request to subrequests.
+         * Empty by default - you must explicitly specify which headers to forward.
          *
-         * Example: X-Custom-Auth, X-Tenant-ID
+         * Example: Authorization, Cookie, X-API-Key
          */
-        private List<String> additionalAuthHeaders = new ArrayList<>();
+        private List<String> forwardedHeaders = new ArrayList<>();
     }
 }

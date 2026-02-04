@@ -70,7 +70,7 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     public Optional<EndpointInfo> getEndpointInformations(String method, String url) {
         String firstSegment = getFirstSegment(url);
         if (!patternsByFirstSegment.containsKey(firstSegment)) {
-            throw new RuntimeException(String.format("Endpoint %s not available for composite use", url));
+            return Optional.empty();
         }
 
         return findMatchingEndpoint(method, url);

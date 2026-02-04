@@ -1,7 +1,9 @@
 package io.github.nabilcarel.composite;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
@@ -17,7 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,12 +32,13 @@ class ReferenceResolverServiceImplTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private SubRequest subRequest;
     private final String batchId = "test-batch-id";
+    private final CompositeProperties properties = new CompositeProperties();
 
     private ReferenceResolverServiceImpl referenceResolverService;
 
     @BeforeEach
     void setUp() {
-        referenceResolverService = new ReferenceResolverServiceImpl(responseStore, mapper);
+        referenceResolverService = new ReferenceResolverServiceImpl(responseStore, mapper, properties);
 
         subRequest = new SubRequest(SubRequestDto.builder().build());
         subRequest.setUrl("http://test.com/api/${user['name']}");
@@ -62,8 +65,8 @@ class ReferenceResolverServiceImplTest {
     void testResolveUrl_withPlaceholder() {
         createStubs();
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/John%20Doe", resolvedUrl);
-        assertEquals("http://test.com/api/John%20Doe", subRequest.getResolvedUrl());
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/John%20Doe");
+        assertThat(subRequest.getResolvedUrl()).isEqualTo("http://test.com/api/John%20Doe");
     }
 
     @Test
@@ -71,7 +74,7 @@ class ReferenceResolverServiceImplTest {
         createStubs();
         subRequest.setUrl("http://test.com/api/${user.name}/city/${user.city}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/John%20Doe/city/New%20York", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/John%20Doe/city/New%20York");
     }
 
     @Test
@@ -81,7 +84,7 @@ class ReferenceResolverServiceImplTest {
         headers.put("X-User", "${user.name}");
         subRequest.setHeaders(headers);
         referenceResolverService.resolveHeaders(subRequest, batchId);
-        assertEquals("John Doe", subRequest.getResolvedHeaders().get("X-User"));
+        assertThat(subRequest.getResolvedHeaders()).containsEntry("X-User", "John Doe");
     }
 
     @Test
@@ -90,22 +93,23 @@ class ReferenceResolverServiceImplTest {
         headers.put("X-Static", "static-value");
         subRequest.setHeaders(headers);
         referenceResolverService.resolveHeaders(subRequest, batchId);
-        assertEquals("static-value", subRequest.getResolvedHeaders().get("X-Static"));
+        assertThat(subRequest.getResolvedHeaders()).containsEntry("X-Static", "static-value");
     }
 
     @Test
     void testResolveBody_withNoNodeReferences() {
         subRequest.getNodeReferences().addAll(Collections.emptyList());
-        assertDoesNotThrow(() -> referenceResolverService.resolveBody(subRequest, batchId));
+        assertThatCode(() -> referenceResolverService.resolveBody(subRequest, batchId))
+            .doesNotThrowAnyException();
     }
 
     @Test
     void testResolveUrl_invalidPlaceholder_throwsException() {
         createStubs();
         subRequest.setUrl("http://test.com/api/${invalid}");
-        ReferenceResolutionException ex = assertThrows(ReferenceResolutionException.class, () ->
-                referenceResolverService.resolveUrl(subRequest, batchId));
-        assertTrue(ex.getMessage().contains("No response found for reference ID"));
+        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, batchId))
+            .isInstanceOf(ReferenceResolutionException.class)
+            .hasMessageContaining("No response found for reference ID");
     }
 
     @Test
@@ -114,12 +118,10 @@ class ReferenceResolverServiceImplTest {
         ResponseTracker localTracker = responseStore.get(batchId);
         localTracker.getSubResponseMap().remove("user");
         subRequest.setUrl("http://test.com/api/${user.name}");
-        ReferenceResolutionException ex = assertThrows(ReferenceResolutionException.class, () ->
-                referenceResolverService.resolveUrl(subRequest, batchId));
-        assertTrue(ex.getMessage().contains("No response found for reference ID"));
+        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, batchId))
+            .isInstanceOf(ReferenceResolutionException.class)
+            .hasMessageContaining("No response found for reference ID");
     }
-
-    // ========== EDGE CASES TO REVEAL BUGS ==========
 
     @Test
     void testResolveUrl_withBracketNotation_arrayIndex() {
@@ -134,8 +136,8 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/users/${users[0].id}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        // This test will reveal if bracket notation parsing works correctly
-        assertEquals("http://test.com/api/users/1", resolvedUrl);
+
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/users/1");
     }
 
     @Test
@@ -150,8 +152,7 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/${config['database.host']}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        // This will test bracket notation with quoted keys
-        assertEquals("http://test.com/api/localhost", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/localhost");
     }
 
     @Test
@@ -165,10 +166,11 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/users/${user.name}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        // This test will reveal if URL encoding is applied
-        // Expected: "John%20Doe" or "John+Doe", not "John Doe"
-        assertTrue(resolvedUrl.contains("John%20Doe") || resolvedUrl.contains("John+Doe"),
-            "URL should be encoded. Got: " + resolvedUrl);
+
+        assertThat(resolvedUrl).satisfiesAnyOf(
+            url -> assertThat(url).contains("John%20Doe"),
+            url -> assertThat(url).contains("John+Doe")
+        );
     }
 
     @Test
@@ -182,9 +184,11 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/users/${user.email}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        // @ should be encoded as %40
-        assertTrue(resolvedUrl.contains("%40") || resolvedUrl.contains("user@example.com"),
-            "Special characters should be encoded. Got: " + resolvedUrl);
+
+        assertThat(resolvedUrl).satisfiesAnyOf(
+            url -> assertThat(url).contains("%40"),
+            url -> assertThat(url).contains("user@example.com")
+        );
     }
 
     @Test
@@ -204,11 +208,9 @@ class ReferenceResolverServiceImplTest {
         userResponse.setBody(userBody);
         map.put("user", userResponse);
 
-        // This tests nested resolution: ${${ref.target}.name}
-        // First resolve ${ref.target} -> "user", then ${user.name} -> "John"
         subRequest.setUrl("http://test.com/api/${${ref.target}.name}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/John", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/John");
     }
 
     @Test
@@ -228,13 +230,13 @@ class ReferenceResolverServiceImplTest {
         map.put("b", bResponse);
 
         subRequest.setUrl("http://test.com/api/${a.value}");
-        // Should detect circular reference and throw exception
-        assertThrows(IllegalArgumentException.class, () ->
-            referenceResolverService.resolveUrl(subRequest, batchId));
+        assertThatThrownBy(() ->
+            referenceResolverService.resolveUrl(subRequest, batchId))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void testResolveBody_withArrayElementReference() {
+    void testResolveBody_withArrayElementReference() throws JsonProcessingException{
         Map<String, SubResponse> map = createStubs();
 
         SubResponse usersResponse = new SubResponse();
@@ -244,30 +246,26 @@ class ReferenceResolverServiceImplTest {
         ));
         map.put("users", usersResponse);
 
-        try {
-            JsonNode body = mapper.readTree("{\"userId\": \"${users[0].id}\"}");
-            SubRequestDto dto = SubRequestDto.builder()
-                .url("/api/test")
-                .method("POST")
-                .referenceId("test")
-                .body(body)
-                .build();
-            SubRequest request = new SubRequest(dto);
 
-            request.getDependencies();
-            referenceResolverService.resolveBody(request, batchId);
-            
-            // Body should be resolved
-            assertNotNull(request.getBody());
-            String resolvedValue = request.getBody().get("userId").asText();
-            assertEquals("1", resolvedValue);
-        } catch (Exception e) {
-            fail("Should not throw exception: " + e.getMessage());
-        }
+        JsonNode body = mapper.readTree("{\"userId\": \"${users[0].id}\"}");
+        SubRequestDto dto = SubRequestDto.builder()
+            .url("/api/test")
+            .method("POST")
+            .referenceId("test")
+            .body(body)
+            .build();
+        SubRequest request = new SubRequest(dto);
+
+        request.getDependencies();
+        referenceResolverService.resolveBody(request, batchId);
+
+        assertThat(request.getBody()).isNotNull();
+        String resolvedValue = request.getBody().get("userId").asText();
+        assertThat(resolvedValue).isEqualTo("1");
     }
 
     @Test
-    void testResolveBody_withNestedObjectReference() {
+    void testResolveBody_withNestedObjectReference() throws JsonProcessingException {
         Map<String, SubResponse> map = createStubs();
         SubResponse userResponse = new SubResponse();
         Map<String, Object> userBody = new HashMap<>();
@@ -277,7 +275,6 @@ class ReferenceResolverServiceImplTest {
         userResponse.setBody(userBody);
         map.put("user", userResponse);
 
-        try {
             JsonNode body = mapper.readTree("{\"city\": \"${user.address.city}\"}");
             SubRequestDto dto = SubRequestDto.builder()
                 .url("/api/test")
@@ -291,33 +288,25 @@ class ReferenceResolverServiceImplTest {
             referenceResolverService.resolveBody(request, batchId);
             
             String resolvedValue = request.getBody().get("city").asText();
-            assertEquals("New York", resolvedValue);
-        } catch (Exception e) {
-            fail("Should not throw exception: " + e.getMessage());
-        }
+            assertThat(resolvedValue).isEqualTo("New York");
     }
 
     @Test
     void testResolveUrl_withBracketNotationInDependencyExtraction() {
-        // This test will reveal if dependency extraction handles bracket notation
         Map<String, SubResponse> map = createStubs();
 
         SubResponse usersResponse = new SubResponse();
         usersResponse.setBody(List.of(Map.of("id", "1")));
         map.put("users", usersResponse);
 
-        // URL with bracket notation: ${users[0].id}
-        // Dependency should be extracted as "users", not "users[0"
         subRequest.setUrl("http://test.com/api/${users[0].id}");
-        
-        // First check dependency extraction
+
         Set<String> dependencies = subRequest.getDependencies();
-        assertTrue(dependencies.contains("users"), 
-            "Dependency should be 'users', not 'users[0'. Got: " + dependencies);
-        
-        // Then test resolution
+        assertThat(dependencies).contains("users")
+            .doesNotContain("users[0");
+
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/1", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/1");
     }
 
     @Test
@@ -337,7 +326,7 @@ class ReferenceResolverServiceImplTest {
         subRequest.setHeaders(headers);
         
         referenceResolverService.resolveHeaders(subRequest, batchId);
-        assertEquals("secret123", subRequest.getResolvedHeaders().get("X-API-Key"));
+        assertThat(subRequest.getResolvedHeaders()).containsEntry("X-API-Key", "secret123");
     }
 
     @Test
@@ -348,8 +337,9 @@ class ReferenceResolverServiceImplTest {
         map.put("user", userResponse);
 
         subRequest.setUrl("http://test.com/api/${user.name}");
-        assertThrows(ReferenceResolutionException.class, () ->
-            referenceResolverService.resolveUrl(subRequest, batchId));
+        assertThatThrownBy(() ->
+            referenceResolverService.resolveUrl(subRequest, batchId))
+            .isInstanceOf(ReferenceResolutionException.class);
     }
 
     @Test
@@ -363,7 +353,7 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/${data.id}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/123", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/123");
     }
 
     @Test
@@ -376,6 +366,6 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("http://test.com/api/${items[0]}");
         String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
-        assertEquals("http://test.com/api/item1", resolvedUrl);
+        assertThat(resolvedUrl).isEqualTo("http://test.com/api/item1");
     }
 }

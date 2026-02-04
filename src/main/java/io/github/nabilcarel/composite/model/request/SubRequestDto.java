@@ -48,7 +48,8 @@ public class SubRequestDto {
 
     @AssertTrue(message = "Body is required for POST/PUT/PATCH requests")
     private boolean isBodyValid() {
+        boolean hasBody = body != null && !body.isNull() && !body.isMissingNode();
         return !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
-                || body != null;
+                || hasBody;
     }
 }

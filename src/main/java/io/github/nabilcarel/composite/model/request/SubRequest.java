@@ -41,8 +41,27 @@ public class SubRequest {
 
         while (matcher.find()) {
             String reference = matcher.group(1);
-            reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
-            dependencies.add(reference);
+            // Extract root reference ID before any brackets or dots
+            // Handle both dot notation (user.id) and bracket notation (users[0].id)
+            String refId = extractRootReferenceId(reference);
+            dependencies.add(refId);
+        }
+    }
+
+    private String extractRootReferenceId(String reference) {
+        // Find the first occurrence of '.' or '[' to determine where the reference ID ends
+        int dotIndex = reference.indexOf('.');
+        int bracketIndex = reference.indexOf('[');
+        
+        if (bracketIndex != -1 && (dotIndex == -1 || bracketIndex < dotIndex)) {
+            // Bracket notation comes first: users[0] -> users
+            return reference.substring(0, bracketIndex);
+        } else if (dotIndex != -1) {
+            // Dot notation: user.id -> user
+            return reference.substring(0, dotIndex);
+        } else {
+            // No separator, entire reference is the ID
+            return reference;
         }
     }
 
@@ -52,7 +71,7 @@ public class SubRequest {
 
             while (matcher.find()) {
                 String reference = matcher.group(1);
-                String refId = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
+                String refId = extractRootReferenceId(reference);
                 dependencies.add(refId);
             }
         }
@@ -74,8 +93,8 @@ public class SubRequest {
 
                     while (matcher.find()) {
                         String reference = matcher.group(1);
-                        reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
-                        dependencies.add(reference);
+                        String refId = extractRootReferenceId(reference);
+                        dependencies.add(refId);
 
                         // store reference to replace later
                         nodeReferences.add(new ObjectFieldReference(obj, entry.getKey()));
@@ -95,8 +114,8 @@ public class SubRequest {
 
                     while (matcher.find()) {
                         String reference = matcher.group(1);
-                        reference = DEPENDENCY_SPLIT_PATTERN.split(reference)[0];
-                        dependencies.add(reference);
+                        String refId = extractRootReferenceId(reference);
+                        dependencies.add(refId);
 
                         // store reference to replace later
                         nodeReferences.add(new ArrayElementReference(arr, i));

@@ -5,6 +5,7 @@ import static io.github.nabilcarel.composite.util.Patterns.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
+import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.exception.UnresolvedReferenceException;
 import io.github.nabilcarel.composite.model.NodeReference;
@@ -30,12 +31,14 @@ import org.springframework.web.util.UriComponentsBuilder;
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
-    //TODO: Make configurable
-    private static final int MAX_RESOLUTION_ITERATIONS = 10;
-
     private final ConcurrentMap<String, ResponseTracker> responseStore;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper mapper;
+    private final CompositeProperties properties;
+
+    private int getMaxResolutionIterations() {
+        return properties.getMaxResolutionIterations();
+    }
 
     public String resolveUrl(SubRequest subRequest, String batchId) {
         String url = resolveNestedPlaceholders(subRequest.getUrl(), batchId);
@@ -52,9 +55,20 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         subRequest.setResolvedHeaders(subRequest.getHeaders().entrySet().stream().collect(
                 java.util.stream.Collectors.toMap(
                         java.util.Map.Entry::getKey,
-                        entry -> resolveNestedPlaceholders(entry.getValue(), batchId)
+                        entry -> sanitizeHeaderValue(resolveNestedPlaceholders(entry.getValue(), batchId))
                 )
         ));
+    }
+
+    /**
+     * Sanitizes header values to prevent CRLF injection attacks.
+     * Strips carriage return and line feed characters from resolved values.
+     */
+    private String sanitizeHeaderValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replaceAll("[\r\n]", "");
     }
 
     public void resolveBody(SubRequest subRequest, String batchId) {
@@ -113,9 +127,9 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             previous = result;
             result = resolveSinglePass(result, batchId);
             iteration++;
-        } while (!result.equals(previous) && iteration < MAX_RESOLUTION_ITERATIONS);
+        } while (!result.equals(previous) && iteration < getMaxResolutionIterations());
 
-        if (iteration >= MAX_RESOLUTION_ITERATIONS) {
+        if (iteration >= getMaxResolutionIterations()) {
             throw new IllegalArgumentException("Maximum resolution iterations exceeded. Possible circular reference in: " + input);
         }
 

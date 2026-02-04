@@ -25,7 +25,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     private final EndpointRegistry endpointRegistry;
 
     @Value("${composite.max-depth:10}")
-    private int maxDepth;
+    private final int maxDepth;
 
     public List<String> validateRequest(CompositeRequest request) {
         List<String> errors = new ArrayList<>();
@@ -106,8 +106,9 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         List<String> errors = new ArrayList<>();
 
         for (SubRequestDto request : requests) {
-            dependencyGraph.put(request.getReferenceId(),
-                    new SubRequest(request).getDependencies());
+            SubRequest subRequest = new SubRequest(request);
+            // Dependencies are extracted from URL, headers, and body
+            dependencyGraph.put(request.getReferenceId(), subRequest.getDependencies());
         }
 
         // Check for missing dependencies
@@ -124,21 +125,25 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         // Check for circular dependencies
         Set<String> visited = new HashSet<>();
         Set<String> currentPath = new HashSet<>();
+        boolean hasCircular = false;
 
         for (String referenceId : dependencyGraph.keySet()) {
             if (!visited.contains(referenceId) &&
                 hasCircularDependency(referenceId, dependencyGraph, visited, currentPath)) {
                     errors.add("Circular dependency detected in path: " + currentPath);
                     log.error(errors.get(errors.size() - 1));
+                    hasCircular = true;
             }
         }
 
-        // Validate dependency depth
-        int currentDepth = calculateMaxDependencyDepth(dependencyGraph);
+        // Validate dependency depth (skip if circular - would cause infinite recursion)
+        if (!hasCircular) {
+            int currentDepth = calculateMaxDependencyDepth(dependencyGraph);
 
-        if (currentDepth > maxDepth) {
-            errors.add("Maximum dependency depth exceeded: current=" + currentDepth + " maxDepth=" + maxDepth);
-            log.error(errors.get(errors.size() - 1));
+            if (currentDepth > maxDepth) {
+                errors.add("Maximum dependency depth exceeded: current=" + currentDepth + " maxDepth=" + maxDepth);
+                log.error(errors.get(errors.size() - 1));
+            }
         }
 
         return errors;
@@ -161,7 +166,15 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         visited.add(current);
         currentPath.add(current);
 
-        for (String dependency : dependencyGraph.get(current)) {
+        Set<String> dependencies = dependencyGraph.get(current);
+        if (dependencies == null) {
+            return false; // Dependency doesn't exist in graph (caught by missing dependency check)
+        }
+
+        for (String dependency : dependencies) {
+            if (!dependencyGraph.containsKey(dependency)) {
+                continue; // Skip missing dependencies (already reported as error)
+            }
             if (hasCircularDependency(dependency, dependencyGraph, visited, currentPath)) {
                 return true;
             }
@@ -173,9 +186,10 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
     private int calculateMaxDependencyDepth(Map<String, Set<String>> dependencyGraph) {
         Map<String, Integer> depth = new HashMap<>();
+        Set<String> processing = new HashSet<>();
 
         for (String referenceId : dependencyGraph.keySet()) {
-            calculateDepth(referenceId, dependencyGraph, depth);
+            calculateDepth(referenceId, dependencyGraph, depth, processing);
         }
 
         return depth.values().stream()
@@ -187,21 +201,33 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     private int calculateDepth(
             String current,
             Map<String, Set<String>> dependencyGraph,
-            Map<String, Integer> depth) {
+            Map<String, Integer> depth,
+            Set<String> processing) {
 
         if (depth.containsKey(current)) {
             return depth.get(current);
         }
 
-        if (dependencyGraph.get(current).isEmpty()) {
+        if (processing.contains(current)) {
+            // Cycle detected - shouldn't happen if hasCircular check worked, but safety net
+            return 0;
+        }
+
+        Set<String> dependencies = dependencyGraph.get(current);
+        if (dependencies == null || dependencies.isEmpty()) {
             depth.put(current, 0);
             return 0;
         }
 
-        int maxChildDepth = dependencyGraph.get(current).stream()
-                .mapToInt(dep -> calculateDepth(dep, dependencyGraph, depth))
+        processing.add(current);
+
+        int maxChildDepth = dependencies.stream()
+                .filter(dependencyGraph::containsKey)
+                .mapToInt(dep -> calculateDepth(dep, dependencyGraph, depth, processing))
                 .max()
                 .orElse(-1);
+
+        processing.remove(current);
 
         int currentDepth = maxChildDepth + 1;
         depth.put(current, currentDepth);
@@ -210,10 +236,11 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
     public List<String> validateEndpointAccess(SubRequestDto request) {
         List<String> errors = new ArrayList<>();
+        String refId = request.getReferenceId();
         String methodError = validateHttpMethod(request.getMethod());
 
-        if(methodError != null){
-            errors.add(methodError);
+        if (methodError != null) {
+            errors.add("[" + refId + "] " + methodError);
         }
 
         // Validate endpoint availability
@@ -221,18 +248,21 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
                 request.getUrl());
 
         if (endpointInfo.isEmpty()) {
-            errors.add("Endpoint not available: " + request.getMethod() + " " + request.getUrl());
-            log.error(errors.get(errors.size() - 1));
+            String error = "[" + refId + "] Endpoint not available for composite execution: " + request.getMethod() + " " + request.getUrl();
+            errors.add(error);
+            log.error(error);
         }
 
         // Validate request body against method
-        errors.addAll(validateRequestBody(request));
+        for (String bodyError : validateRequestBody(request)) {
+            errors.add("[" + refId + "] " + bodyError);
+        }
 
         // Validate URL format
         String urlError = validateResolvedUrlFormat(request.getUrl());
 
         if (urlError != null) {
-            errors.add(urlError);
+            errors.add("[" + refId + "] " + urlError);
         }
 
         return errors;
@@ -241,7 +271,9 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     private List<String> validateRequestBody(SubRequestDto request) {
         List<String> errors = new ArrayList<>();
 
-        boolean hasBody = request.getBody() != null;
+        boolean hasBody = request.getBody() != null
+                && !request.getBody().isNull()
+                && !request.getBody().isMissingNode();
         boolean requiresBody = Arrays.asList("POST", "PUT", "PATCH")
                 .contains(request.getMethod().toUpperCase());
         boolean forbidsBody = Arrays.asList("GET", "DELETE", "HEAD", "OPTIONS")
@@ -297,6 +329,9 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     }
 
     private String escapeUriTemplate(String url) {
-        return url.replace("${", "%24%7B").replace("}", "%7D");
+        return url.replace("${", "%24%7B")
+                  .replace("}", "%7D")
+                  .replace("[", "%5B")
+                  .replace("]", "%5D");
     }
 }
