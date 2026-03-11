@@ -27,6 +27,36 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 
+/**
+ * Default {@link ReferenceResolverService} implementation that resolves
+ * {@code ${referenceId.propertyPath}} placeholder expressions by navigating the response
+ * bodies stored in the shared {@link ResponseTracker} map.
+ *
+ * <p>Property path navigation supports four access modes:
+ * <ol>
+ *   <li><strong>Bean property</strong> (POJO) — via
+ *       {@link org.springframework.beans.BeanWrapperImpl BeanWrapperImpl}, supporting both
+ *       dot ({@code user.address.city}) and bracket ({@code user[address][city]})
+ *       notation.</li>
+ *   <li><strong>Map key</strong> — dot notation for simple keys; quoted bracket notation
+ *       ({@code config['db.host']}) for keys containing dots or other separators.</li>
+ *   <li><strong>List / Collection index</strong> — bracket numeric index notation
+ *       ({@code items[0]}), with optional chained navigation ({@code items[0].name}).</li>
+ *   <li><strong>Array index</strong> — same bracket notation as above, using
+ *       {@link java.lang.reflect.Array#get(Object, int) Array.get}.</li>
+ * </ol>
+ *
+ * <p>Multi-pass resolution is performed iteratively up to
+ * {@code composite.max-resolution-iterations} times to handle nested
+ * placeholders. Resolution terminates early when a pass produces no changes.
+ *
+ * <p>Header values are sanitised after resolution to strip CRLF characters, preventing
+ * HTTP header injection.
+ *
+ * @see ReferenceResolverService
+ * @see io.github.nabilcarel.composite.util.Patterns
+ * @since 0.0.1
+ */
 @Service
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
@@ -72,7 +102,13 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     }
 
     public void resolveBody(SubRequest subRequest, String batchId) {
-        if (subRequest.getBody() == null || subRequest.getNodeReferences().isEmpty()) {
+        if (subRequest.getBody() == null) {
+            return;
+        }
+
+        subRequest.initNodeReferences();
+
+        if (subRequest.getNodeReferences().isEmpty()) {
             return;
         }
 
@@ -147,8 +183,8 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         while (matcher.find()) {
             try {
                 PlaceholderResolution placeholder = resolvePlaceholder(matcher, batchId);
-                String replacement = getResolvedValue(placeholder.getRoot(), placeholder.getObjectId(),
-                        placeholder.getPropertyPath());
+                String replacement = getResolvedValue(placeholder.root(), placeholder.objectId(),
+                        placeholder.propertyPath());
                 matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
             } catch (UnresolvedReferenceException e) {
                 // Leave unresolved placeholders as-is for next iteration
@@ -166,8 +202,8 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     private Object parseResolvedValue(String resolvedText, String originalExpression, String batchId) {
         try {
             PlaceholderResolution placeholder = parseExpression(originalExpression, batchId);
-            return getResolvedObject(placeholder.getRoot(), placeholder.getObjectId(),
-                    placeholder.getPropertyPath());
+            return getResolvedObject(placeholder.root(), placeholder.objectId(),
+                    placeholder.propertyPath());
         } catch (Exception e) {
             // Fallback to string value
             return resolvedText;
@@ -179,7 +215,12 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
      */
     private String getResolvedValue(Object root, String objectId, String propertyPath) {
         Object value = getResolvedObject(root, objectId, propertyPath);
-        return value != null ? value.toString() : "";
+        if (value == null) {
+            throw new ReferenceResolutionException(
+                    "Resolved value is null for path '" + propertyPath + "' on object '" + objectId + "'",
+                    objectId);
+        }
+        return value.toString();
     }
 
     private Object getResolvedObject(Object root, String objectId, String propertyPath) {
@@ -320,8 +361,10 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             String literalKey = propertyPath.substring(2, endIndex);
             Object value = map.get(literalKey);
 
-            if (value == null) {
-                return null;
+            if (value == null && !map.containsKey(literalKey)) {
+                throw new ReferenceResolutionException(
+                        "Property '" + literalKey + "' not found in response. Available keys: " + map.keySet(),
+                        literalKey);
             }
 
             // Check for remaining path after ['key']
@@ -341,15 +384,27 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
         if (dotIndex == -1) {
             // Simple key, no nesting
-            return map.get(propertyPath);
+            Object value = map.get(propertyPath);
+            if (value == null && !map.containsKey(propertyPath)) {
+                throw new ReferenceResolutionException(
+                        "Property '" + propertyPath + "' not found in response. Available keys: " + map.keySet(),
+                        propertyPath);
+            }
+            return value;
         }
 
         // Split on first dot
         String firstKey = propertyPath.substring(0, dotIndex);
         Object value = map.get(firstKey);
 
+        if (value == null && !map.containsKey(firstKey)) {
+            throw new ReferenceResolutionException(
+                    "Property '" + firstKey + "' not found in response. Available keys: " + map.keySet(),
+                    firstKey);
+        }
+
         if (value == null) {
-            return null;
+            return null; // Key exists but value is null
         }
 
         // Recursively resolve remaining path

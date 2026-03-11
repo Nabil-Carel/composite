@@ -6,6 +6,7 @@ import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,6 +37,7 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeRequestServiceImpl implements CompositeRequestService{
+
     private final EndpointRegistry endpointRegistry;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper objectMapper;
@@ -58,17 +60,18 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         );
 
         if (endpointInfo.isEmpty()) {
-            SubResponse errorResponse = SubResponse.builder()
-                    .httpStatus(HttpStatus.BAD_REQUEST.value())
-                    .referenceId(subRequest.getReferenceId())
-                    .body("Invalid endpoint received: " + subRequest.getUrl())
-                    .build();
-
-            responseStore
-                    .get(requestId)
-                    .addResponse(subRequest.getReferenceId(), errorResponse);
             log.error("Invalid endpoint received: {}", subRequest.getUrl());
+            addErrorToTracker(requestId, subRequest.getReferenceId(),
+                    HttpStatus.BAD_REQUEST.value(),
+                    "Invalid endpoint received: " + subRequest.getUrl());
             return Mono.empty();
+        }
+
+        // Snapshot original values before resolution for debug info
+        String originalUrl = subRequest.getUrl();
+        Object originalBody = null;
+        if (properties.isDebugEnabled() && subRequest.getBody() != null) {
+            originalBody = subRequest.getBody().deepCopy();
         }
 
         String resolvedUrl;
@@ -77,17 +80,24 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             referenceResolver.resolveHeaders(subRequest, requestId);
             referenceResolver.resolveBody(subRequest, requestId);
         } catch (Exception e) {
-            SubResponse errorResponse = SubResponse.builder()
-                    .httpStatus(HttpStatus.BAD_REQUEST.value())
-                    .referenceId(subRequest.getReferenceId())
-                    .body("Reference resolution failed: " + e.getMessage())
-                    .build();
-
-            responseStore
-                    .get(requestId)
-                    .addResponse(subRequest.getReferenceId(), errorResponse);
             log.error("Reference resolution failed for {}: {}", subRequest.getReferenceId(), e.getMessage(), e);
+            addErrorToTracker(requestId, subRequest.getReferenceId(),
+                    HttpStatus.BAD_REQUEST.value(),
+                    "Reference resolution failed: " + e.getMessage());
             return Mono.empty();
+        }
+
+        if (properties.isDebugEnabled()) {
+            CompositeDebugInfo debugInfo = (CompositeDebugInfo) servletRequest.getAttribute("compositeDebug");
+            if (debugInfo != null) {
+                CompositeDebugInfo.SubRequestDebugInfo subDebug = CompositeDebugInfo.SubRequestDebugInfo.builder()
+                        .originalUrl(originalUrl)
+                        .resolvedUrl(resolvedUrl)
+                        .originalBody(originalBody)
+                        .resolvedBody(subRequest.getBody())
+                        .build();
+                debugInfo.getResolvedRequests().put(subRequest.getReferenceId(), subDebug);
+            }
         }
 
         // Re-validate resolved URL against registered endpoints to prevent path traversal/SSRF
@@ -96,33 +106,20 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         );
 
         if (resolvedEndpointInfo.isEmpty()) {
-            SubResponse errorResponse = SubResponse.builder()
-                    .httpStatus(HttpStatus.BAD_REQUEST.value())
-                    .referenceId(subRequest.getReferenceId())
-                    .body("Resolved URL does not match a registered endpoint: " + resolvedUrl)
-                    .build();
-
-            responseStore
-                    .get(requestId)
-                    .addResponse(subRequest.getReferenceId(), errorResponse);
             log.error("Resolved URL does not match registered endpoint: {} (original: {})",
                     resolvedUrl, subRequest.getUrl());
+            addErrorToTracker(requestId, subRequest.getReferenceId(),
+                    HttpStatus.BAD_REQUEST.value(),
+                    "Resolved URL does not match a registered endpoint: " + resolvedUrl);
             return Mono.empty();
         }
 
         String error = compositeRequestValidator.validateResolvedUrlFormat(resolvedUrl);
 
         if (error != null) {
-            SubResponse errorResponse = SubResponse.builder()
-                    .httpStatus(HttpStatus.BAD_REQUEST.value())
-                    .referenceId(subRequest.getReferenceId())
-                    .body(error)
-                    .build();
-
-            responseStore
-                    .get(requestId)
-                    .addResponse(subRequest.getReferenceId(), errorResponse);
             log.error("Invalid URL format: {}", error);
+            addErrorToTracker(requestId, subRequest.getReferenceId(),
+                    HttpStatus.BAD_REQUEST.value(), error);
             return Mono.empty();
         }
 
@@ -147,68 +144,39 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
 
         // Apply per-subrequest timeout if configured, otherwise use default
         Duration timeout = properties.getSubRequestTimeout() != null
-            ? properties.getSubRequestTimeout() 
+            ? properties.getSubRequestTimeout()
             : properties.getRequestTimeout();
 
-        /*return requestSpec
+        return requestSpec
                 .exchangeToMono(response ->
-                        toBody(response, resolvedEndpointInfo.get().getReturnClass()).map(body -> {
-                            SubResponse.SubResponseBuilder subResponseBuilder = SubResponse.builder()
-                                    .referenceId(subRequest.getReferenceId())
-                                    .httpStatus(response.statusCode().value());
-                            if (body != null) {
-                                subResponseBuilder.body(body);
-                            }
-                            return subResponseBuilder.build();
-                        })
+                        toBody(response, resolvedEndpointInfo.get().getReturnClass())
+                            .map(body -> {
+                                SubResponse.SubResponseBuilder subResponseBuilder = SubResponse.builder()
+                                        .referenceId(subRequest.getReferenceId())
+                                        .httpStatus(response.statusCode().value());
+                                if (!isVoidResponse(body)) {
+                                    subResponseBuilder.body(body);
+                                }
+                                return subResponseBuilder.build();
+                            })
                 )
+                .timeout(timeout)
                 .doOnSuccess(subResponse -> {
                     ResponseTracker tracker = responseStore.get(requestId);
                     if (tracker != null) {
                         tracker.addResponse(subRequest.getReferenceId(), subResponse);
+                    } else {
+                        // Tracker missing - this is a critical error, request will hang
+                        log.error("ResponseTracker not found for ID: {} - request will not complete", requestId);
                     }
                 })
-                .doOnError(throwable -> {
+                .onErrorResume(throwable -> {
                     log.error("Error forwarding subrequest {}: {}", subRequest.getReferenceId(), throwable.getMessage(), throwable);
-                    ResponseTracker tracker = responseStore.get(requestId);
-                    if (tracker != null) {
-                        SubResponse errorResponse = SubResponse.builder()
-                                .httpStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
-                                .referenceId(subRequest.getReferenceId())
-                                .body("Error executing subrequest: " + throwable.getMessage())
-                                .build();
-                        tracker.addResponse(subRequest.getReferenceId(), errorResponse);
-                    }
+                    addErrorToTracker(requestId, subRequest.getReferenceId(),
+                            HttpStatus.SERVICE_UNAVAILABLE.value(),
+                            "Error executing subrequest: " + throwable.getMessage());
+                    return Mono.empty();
                 })
-                .then();*/
-
-        return requestSpec
-                .exchangeToMono(response ->
-                        toBody(response, resolvedEndpointInfo.get().getReturnClass()).flatMap(body -> {
-                            // 1. Build the response object
-                            SubResponse.SubResponseBuilder subResponseBuilder = SubResponse.builder()
-                                    .referenceId(subRequest.getReferenceId())
-                                    .httpStatus(response.statusCode().value());
-                            if (body != null) {
-                                subResponseBuilder.body(body);
-                            }
-                            SubResponse subResponse = subResponseBuilder.build();
-
-                            // 2. CRITICAL: Move side-effect into the pipe
-                            // This ensures that if tracker is null or addResponse fails,
-                            // the error propagates to the caller.
-                            ResponseTracker tracker = responseStore.get(requestId);
-                            if (tracker != null) {
-                                tracker.addResponse(subRequest.getReferenceId(), subResponse);
-                            } else {
-                                // Optional: Fail explicitly if the tracker is missing
-                                return Mono.error(new IllegalStateException("ResponseTracker not found for ID: " + requestId));
-                            }
-
-                            return Mono.just(subResponse);
-                        })
-                )
-                // .then() still works; it just waits for the flatMap above to finish
                 .then();
     }
 
@@ -216,21 +184,65 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         return !method.equalsIgnoreCase("GET") && !method.equalsIgnoreCase("HEAD");
     }
 
+    private static final Object VOID_RESPONSE = new Object();
+
     private Mono<Object> toBody(ClientResponse response, Class<?> bodyClass) {
         HttpStatusCode status = response.statusCode();
         if (status.is2xxSuccessful()) {
             if (bodyClass != null && bodyClass != Void.class) {
-                return response.bodyToMono(bodyClass);
+                return response.bodyToMono(bodyClass)
+                    .cast(Object.class)
+                    .switchIfEmpty(Mono.just(VOID_RESPONSE))
+                    .onErrorResume(e -> {
+                        // JSON parse error or type mismatch - return error as string
+                        log.warn("Failed to parse response body as {}: {}", bodyClass.getSimpleName(), e.getMessage());
+                        return Mono.just("Failed to parse response: " + e.getMessage());
+                    });
             } else {
-                return Mono.empty();
+                // Void return type - release body and signal void response
+                return response.releaseBody().thenReturn(VOID_RESPONSE);
             }
         } else if (status.isError()) {
-            return response.bodyToMono(String.class).map(errorBody -> {
-                log.error("Error from subrequest: {} - {}", status, errorBody);
-                return errorBody;
-            });
+            return response.bodyToMono(String.class)
+                .defaultIfEmpty("")
+                .map(errorBody -> {
+                    log.error("Error from subrequest: {} - {}", status, errorBody);
+                    return (Object) errorBody;
+                });
         } else {
-            return Mono.empty();
+            // 1xx informational or 3xx redirect - release body and signal void
+            log.warn("Received non-standard response status: {}", status);
+            return response.releaseBody().thenReturn(VOID_RESPONSE);
+        }
+    }
+
+    private boolean isVoidResponse(Object body) {
+        return body == VOID_RESPONSE;
+    }
+
+    private void addErrorToTracker(String requestId, String referenceId, int status, String message) {
+        ResponseTracker tracker = responseStore.get(requestId);
+        if (tracker != null) {
+            SubResponse errorResponse = SubResponse.builder()
+                    .httpStatus(status)
+                    .referenceId(referenceId)
+                    .body(message)
+                    .build();
+            tracker.addResponse(referenceId, errorResponse);
+        } else {
+            log.error("ResponseTracker not found for requestId: {} - cannot record error for {}", requestId, referenceId);
+        }
+    }
+
+    private void cleanup(String requestId, HttpServletRequest request, HttpServletResponse response) {
+        responseStore.remove(requestId);
+        request.removeAttribute("composite");
+        try {
+            if (!response.isCommitted()) {
+                response.reset();
+            }
+        } catch (Exception e) {
+            log.debug("Could not reset response: {}", e.getMessage());
         }
     }
 
@@ -256,11 +268,13 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                     .orTimeout(properties.getRequestTimeout().getSeconds(), TimeUnit.SECONDS)
                     .thenApply(compositeResponse -> {
                         try {
+                            if (properties.isDebugEnabled()) {
+                                CompositeDebugInfo debugInfo = (CompositeDebugInfo) request.getAttribute("compositeDebug");
+                                compositeResponse.setDebug(debugInfo);
+                            }
                             return ResponseEntity.ok(compositeResponse);
                         } finally {
-                            responseStore.remove(requestId);
-                            request.removeAttribute("composite");
-                            response.reset();
+                            cleanup(requestId, request, response);
                         }
                     })
                     .exceptionally(ex -> {
@@ -272,7 +286,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                                     .build();
                             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
                         } finally {
-                            responseStore.remove(requestId);
+                            cleanup(requestId, request, response);
                         }
                     });
         } else {

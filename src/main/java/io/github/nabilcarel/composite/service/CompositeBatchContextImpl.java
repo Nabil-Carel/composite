@@ -12,6 +12,28 @@ import lombok.Getter;
 import org.springframework.http.HttpStatus;
 import reactor.core.publisher.Mono;
 
+/**
+ * Default {@link CompositeBatchContext} implementation that wires the completion callback of
+ * the {@link ResponseTracker} to the {@link SubRequestCoordinator}'s dependency resolution
+ * logic.
+ *
+ * <p>On construction, registers {@link #handleSubRequestResolved(String)} as the callback
+ * on the {@link ResponseTracker}. Each time a sub-request completes, the callback:
+ * <ol>
+ *   <li>Asks the {@link SubRequestCoordinator} which sub-requests are now ready
+ *       ({@link SubRequestCoordinator#markResolved(String)}).</li>
+ *   <li>Atomically marks each ready sub-request as {@code IN_PROGRESS}
+ *       ({@link SubRequestCoordinator#markInProgress(String)}) to prevent concurrent
+ *       double-dispatch.</li>
+ *   <li>Checks whether any of the newly-ready sub-requests have failed dependencies; if so,
+ *       a synthetic {@code 424 Failed Dependency} response is recorded immediately.</li>
+ *   <li>Dispatches the remaining ready sub-requests via
+ *       {@link CompositeRequestService#forwardSubrequest}.</li>
+ * </ol>
+ *
+ * @see CompositeBatchContext
+ * @since 0.0.1
+ */
 public class CompositeBatchContextImpl implements CompositeBatchContext {
     @Getter
     private final ResponseTracker tracker;

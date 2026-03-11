@@ -1,6 +1,8 @@
 package io.github.nabilcarel.composite.config;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +18,29 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
+/**
+ * Discovers and maintains an allowlist of Spring MVC endpoints that are eligible for
+ * composite execution.
+ *
+ * <p>At application startup (on {@link org.springframework.boot.context.event.ApplicationReadyEvent
+ * ApplicationReadyEvent}), the registry scans all handler methods registered in the
+ * {@link RequestMappingHandlerMapping} and retains only those annotated with
+ * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint &#64;CompositeEndpoint}.
+ *
+ * <p>During request validation and execution, every sub-request URL is matched against the
+ * registered patterns using Spring's {@link AntPathMatcher}. A sub-request that targets an
+ * unregistered URL is rejected immediately, preventing Server-Side Request Forgery (SSRF)
+ * attacks. The {@link EndpointInfo} stored for each registered endpoint carries the
+ * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint#value() response class}
+ * needed to deserialize the loopback response.
+ *
+ * <p>For efficiency, patterns are indexed by their first path segment so that the matching
+ * loop only compares candidates with a matching prefix.
+ *
+ * @see io.github.nabilcarel.composite.annotation.CompositeEndpoint
+ * @see io.github.nabilcarel.composite.service.CompositeRequestValidator
+ * @since 0.0.1
+ */
 @Component
 @Slf4j
 @RequiredArgsConstructor
@@ -68,12 +93,24 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     }
 
     public Optional<EndpointInfo> getEndpointInformations(String method, String url) {
-        String firstSegment = getFirstSegment(url);
+        String normalizedUrl = normalizePath(url);
+        String firstSegment = getFirstSegment(normalizedUrl);
         if (!patternsByFirstSegment.containsKey(firstSegment)) {
             return Optional.empty();
         }
 
-        return findMatchingEndpoint(method, url);
+        return findMatchingEndpoint(method, normalizedUrl);
+    }
+
+    private String normalizePath(String url) {
+        try {
+            URI uri = new URI(url).normalize();
+            String path = uri.getPath();
+            String query = uri.getRawQuery();
+            return query != null ? path + "?" + query : path;
+        } catch (URISyntaxException e) {
+            return url;
+        }
     }
 
     private Optional<EndpointInfo> findMatchingEndpoint(String method, String path) {
@@ -100,11 +137,21 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         return new HashSet<>(availableEndpoints.values());
     }
 
+    /**
+     * Composite key used to index registered endpoints by HTTP method and Ant-style URL
+     * pattern.
+     *
+     * @since 0.0.1
+     */
     @Getter
     @Setter
     @AllArgsConstructor
     public static class EndpointPattern {
+
+        /** The HTTP method (e.g. {@code GET}, {@code POST}). */
         private String method;
+
+        /** The Ant-style URL pattern (e.g. {@code /api/users/{id}}). */
         private String pattern;
 
         @Override
@@ -113,13 +160,29 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         }
     }
 
+    /**
+     * Metadata about a registered composite-eligible endpoint.
+     *
+     * @since 0.0.1
+     */
     @Getter
     @Setter
     @Builder
     public static class EndpointInfo {
+
+        /** The Ant-style URL pattern registered for this endpoint. */
         private String pattern;
+
+        /** The HTTP method of this endpoint (e.g. {@code GET}). */
         private String method;
+
+        /** Optional human-readable description of the endpoint. */
         private String description;
+
+        /**
+         * The Java class into which the endpoint's response body should be deserialized,
+         * as declared by {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint#value()}.
+         */
         private Class<?> returnClass;
     }
 }

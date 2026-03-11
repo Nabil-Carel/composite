@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.service;
 
+import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
@@ -16,19 +17,26 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
-@Component
+@Service
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeRequestValidatorImpl implements CompositeRequestValidator {
     private final Validator validator;
     private final EndpointRegistry endpointRegistry;
-
-    @Value("${composite.max-depth:10}")
-    private final int maxDepth;
+    private final CompositeProperties properties;
 
     public List<String> validateRequest(CompositeRequest request) {
         List<String> errors = new ArrayList<>();
+
+        if (request.getSubRequests().size() > properties.getMaxSubRequestsPerComposite()) {
+            errors.add("Too many sub-requests: " + request.getSubRequests().size() +
+                    " exceeds the maximum of " + properties.getMaxSubRequestsPerComposite());
+            log.error(errors.get(0));
+            return errors;
+        }
+
         Set<String> references = new HashSet<>();
 
         for (int i = 0; i < request.getSubRequests().size(); i++) {
@@ -140,8 +148,8 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         if (!hasCircular) {
             int currentDepth = calculateMaxDependencyDepth(dependencyGraph);
 
-            if (currentDepth > maxDepth) {
-                errors.add("Maximum dependency depth exceeded: current=" + currentDepth + " maxDepth=" + maxDepth);
+            if (currentDepth > properties.getMaxDepth()) {
+                errors.add("Maximum dependency depth exceeded: current=" + currentDepth + " maxDepth=" + properties.getMaxDepth());
                 log.error(errors.get(errors.size() - 1));
             }
         }
@@ -237,6 +245,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     public List<String> validateEndpointAccess(SubRequestDto request) {
         List<String> errors = new ArrayList<>();
         String refId = request.getReferenceId();
+
         String methodError = validateHttpMethod(request.getMethod());
 
         if (methodError != null) {
@@ -276,7 +285,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
                 && !request.getBody().isMissingNode();
         boolean requiresBody = Arrays.asList("POST", "PUT", "PATCH")
                 .contains(request.getMethod().toUpperCase());
-        boolean forbidsBody = Arrays.asList("GET", "DELETE", "HEAD", "OPTIONS")
+        boolean forbidsBody = Arrays.asList("GET", "DELETE")
                 .contains(request.getMethod().toUpperCase());
 
         if (requiresBody && !hasBody) {
@@ -297,7 +306,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             return "HTTP method cannot be null or empty";
         }
 
-        Set<String> validMethods = Set.of("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS");
+        Set<String> validMethods = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
         String normalizedMethod = method.toUpperCase();
 
         if (!validMethods.contains(normalizedMethod)) {

@@ -44,7 +44,6 @@ class ReferenceResolverServiceImplTest {
         subRequest.setUrl("http://test.com/api/${user['name']}");
         subRequest.setHeaders(new HashMap<>());
         subRequest.setBody(null);
-        subRequest.getNodeReferences().addAll(Collections.emptyList());
     }
 
     private Map<String, SubResponse> createStubs() {
@@ -97,8 +96,8 @@ class ReferenceResolverServiceImplTest {
     }
 
     @Test
-    void testResolveBody_withNoNodeReferences() {
-        subRequest.getNodeReferences().addAll(Collections.emptyList());
+    void testResolveBody_withNullBody_doesNotThrow() {
+        // subRequest has null body (set in setUp) — resolveBody should exit cleanly
         assertThatCode(() -> referenceResolverService.resolveBody(subRequest, batchId))
             .doesNotThrowAnyException();
     }
@@ -256,7 +255,6 @@ class ReferenceResolverServiceImplTest {
             .build();
         SubRequest request = new SubRequest(dto);
 
-        request.getDependencies();
         referenceResolverService.resolveBody(request, batchId);
 
         assertThat(request.getBody()).isNotNull();
@@ -284,7 +282,6 @@ class ReferenceResolverServiceImplTest {
                 .build();
             SubRequest request = new SubRequest(dto);
 
-            request.getDependencies();
             referenceResolverService.resolveBody(request, batchId);
             
             String resolvedValue = request.getBody().get("city").asText();

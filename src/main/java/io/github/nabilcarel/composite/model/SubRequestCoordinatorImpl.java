@@ -7,6 +7,30 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.Getter;
 
+/**
+ * Default {@link SubRequestCoordinator} implementation backed by a dependency DAG.
+ *
+ * <p>Each sub-request is modelled as a {@link SubRequestNode} with:
+ * <ul>
+ *   <li>A set of {@code dependsOn} reference IDs (its direct dependencies).</li>
+ *   <li>A set of {@code dependents} — nodes that depend on this one (populated during
+ *       {@link #buildDependencyGraph()}).</li>
+ *   <li>An {@link java.util.concurrent.atomic.AtomicInteger AtomicInteger}
+ *       {@code remainingDependencies} counter that is decremented as dependencies
+ *       complete.</li>
+ *   <li>An {@link java.util.concurrent.atomic.AtomicReference AtomicReference}
+ *       {@code state} that transitions {@code PENDING → IN_PROGRESS → RESOLVED} using
+ *       compare-and-set operations to prevent double-dispatch in concurrent scenarios.</li>
+ * </ul>
+ *
+ * <p>Construction validates that all declared dependencies refer to known sub-request IDs;
+ * an {@link IllegalArgumentException} is thrown for any unknown dependency. (This is a
+ * defence-in-depth check — the validator should have already caught this before the
+ * coordinator is created.)
+ *
+ * @see SubRequestCoordinator
+ * @since 0.0.1
+ */
 public class SubRequestCoordinatorImpl implements SubRequestCoordinator {
 
     private final Map<String, SubRequestNode> nodes = new ConcurrentHashMap<>();

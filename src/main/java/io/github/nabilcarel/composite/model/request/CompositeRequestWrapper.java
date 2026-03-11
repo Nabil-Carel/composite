@@ -9,8 +9,25 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * {@link HttpServletRequestWrapper} that caches the raw request body so it can be read
+ * more than once.
+ *
+ * <p>The standard Servlet API allows the body {@link jakarta.servlet.ServletInputStream} to
+ * be consumed only once. The composite filter reads the body to deserialise the
+ * {@link CompositeRequest}, and the downstream controller also needs to read it (e.g. for
+ * API documentation introspection). This wrapper eagerly reads and caches the bytes in its
+ * constructor, then returns a fresh {@link java.io.ByteArrayInputStream} from every call to
+ * {@link #getInputStream()}.
+ *
+ * @see io.github.nabilcarel.composite.config.filter.CompositeRequestFilter
+ * @since 0.0.1
+ */
 public class CompositeRequestWrapper extends HttpServletRequestWrapper {
+
+  /** The cached raw bytes of the request body. */
   private final byte[] bodyBytes;
+
   private final ObjectMapper objectMapper;
 
   public CompositeRequestWrapper(HttpServletRequest request, ObjectMapper objectMapper)

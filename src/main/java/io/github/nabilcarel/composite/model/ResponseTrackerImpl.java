@@ -3,6 +3,7 @@ package io.github.nabilcarel.composite.model;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -12,8 +13,24 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Tracks sub-responses in a composite operation.
- * Thread-safe: designed for concurrent access from multiple request threads.
+ * Default {@link ResponseTracker} implementation that uses atomic counters and a
+ * {@link java.util.concurrent.ConcurrentHashMap ConcurrentHashMap} to safely collect
+ * sub-responses from multiple concurrent reactor threads.
+ *
+ * <p>An instance is created once per composite request with the total number of expected
+ * sub-responses. Each call to {@link #addResponse} decrements an
+ * {@link java.util.concurrent.atomic.AtomicInteger AtomicInteger} counter. When the counter
+ * reaches zero, {@link #completeResponse()} assembles the final
+ * {@link io.github.nabilcarel.composite.model.response.CompositeResponse CompositeResponse}
+ * and completes the internal {@link java.util.concurrent.CompletableFuture CompletableFuture}.
+ *
+ * <p>The callback registered via
+ * {@link #setOnSubRequestResolved(java.util.function.Consumer setOnSubRequestResolved)} is
+ * stored in an {@link java.util.concurrent.atomic.AtomicReference AtomicReference} to
+ * allow it to be set after construction without additional synchronisation.
+ *
+ * @see ResponseTracker
+ * @since 0.0.1
  */
 @Slf4j
 public class ResponseTrackerImpl implements ResponseTracker {
@@ -48,7 +65,13 @@ public class ResponseTrackerImpl implements ResponseTracker {
   }
 
   private void completeResponse() {
-    future.complete(CompositeResponse.builder().responses(subResponseMap).build());
+    boolean hasErrors = subResponseMap.values().stream()
+        .anyMatch(r -> r.getHttpStatus() < HttpStatus.OK.value()
+            || r.getHttpStatus() >= HttpStatus.MULTIPLE_CHOICES.value());
+    future.complete(CompositeResponse.builder()
+        .responses(subResponseMap)
+        .hasErrors(hasErrors)
+        .build());
   }
 
   public void setOnSubRequestResolved(Consumer<String> callback) {

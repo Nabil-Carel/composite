@@ -15,6 +15,22 @@ import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * {@link HttpServletResponseWrapper} that captures the sub-request response body into an
+ * in-memory buffer, preventing it from being written to the actual HTTP response.
+ *
+ * <p>The composite execution model dispatches sub-requests as loopback calls via
+ * {@link org.springframework.web.reactive.function.client.WebClient WebClient}, so this
+ * wrapper is available for potential future servlet-dispatch strategies. It overrides
+ * response-committing methods ({@link #flushBuffer()}, {@link #sendError(int)},
+ * {@link #sendRedirect(String)}, {@link #setStatus(int)}) to be no-ops, ensuring that
+ * the real HTTP response is not committed prematurely.
+ *
+ * <p>Call {@link #getCapturedResponseBody()} after the sub-request has been processed to
+ * retrieve the buffered output as a {@link String}.
+ *
+ * @since 0.0.1
+ */
 @Slf4j
 public class SubResponseWrapper extends HttpServletResponseWrapper {
     @Getter
