@@ -171,7 +171,8 @@ public final class SubRequestTarget {
                 if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0
                         || value.chars().anyMatch(Character::isISOControl)) {
                     throw new IllegalArgumentException(
-                            "Referenced value cannot be used as a path segment: " + token.text());
+                            "Value of ${" + token.text() + "} cannot be used in a URL path because it contains "
+                                    + "'/', '\\' or a control character.");
                 }
                 encoded.append(UriUtils.encode(value, StandardCharsets.UTF_8));
                 decoded.append(value);
@@ -183,7 +184,7 @@ public final class SubRequestTarget {
         }
 
         if (isDotSegment(decoded.toString()) || (hasReference && decoded.length() == 0)) {
-            throw new IllegalArgumentException("Referenced value produces an invalid path segment");
+            throw new IllegalArgumentException("A referenced value produces an empty, '.' or '..' URL path segment.");
         }
         return encoded.toString();
     }

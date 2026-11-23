@@ -9,6 +9,7 @@ import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
+import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
 import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
@@ -42,6 +43,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -95,7 +97,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             log.error("Invalid endpoint received: {}", subRequest.getUrl());
             addErrorToTracker(requestId, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
-                    "Invalid endpoint received: " + subRequest.getUrl());
+                    "Invalid endpoint received: " + subRequest.getUrl()
+                            + ". Check the method and path, and that the handler has @CompositeEndpoint.");
             return Mono.empty();
         }
 
@@ -115,7 +118,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             log.error("Reference resolution failed for {}: {}", subRequest.getReferenceId(), e.getMessage(), e);
             addErrorToTracker(requestId, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
-                    "Reference resolution failed: " + e.getMessage());
+                    "Reference resolution failed: " + resolutionFailureMessage(e));
             return Mono.empty();
         }
 
@@ -142,7 +145,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                     resolvedUrl, subRequest.getUrl());
             addErrorToTracker(requestId, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
-                    "Resolved URL does not match a registered endpoint: " + resolvedUrl);
+                    "Resolved URL does not match a registered endpoint: " + resolvedUrl
+                            + ". A referenced value routed this sub-request to an unavailable path.");
             return Mono.empty();
         }
 
@@ -198,10 +202,34 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                     log.error("Error forwarding subrequest {}: {}", subRequest.getReferenceId(), throwable.getMessage(), throwable);
                     addErrorToTracker(requestId, subRequest.getReferenceId(),
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
-                            "Error executing subrequest: " + throwable.getMessage());
+                            "Error executing subrequest: " + transportFailureMessage(throwable));
                     return Mono.empty();
                 })
                 .then();
+    }
+
+    /** Only library validation messages are safe to return to the client. */
+    private static String resolutionFailureMessage(Exception failure) {
+        return failure instanceof ReferenceResolutionException || failure instanceof IllegalArgumentException
+                ? failure.getMessage()
+                : "the reference could not be read.";
+    }
+
+    /** Client exception text can contain internal hosts and ports, so it is never returned. */
+    private static String transportFailureMessage(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof TimeoutException
+                    || cause instanceof io.netty.handler.timeout.TimeoutException) {
+                return "the endpoint did not respond in time.";
+            }
+            if (cause instanceof DataBufferLimitException) {
+                return "the response is larger than the allowed size.";
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return "the endpoint could not be reached.";
     }
 
     private boolean supportsRequestBody(String method) {
@@ -258,7 +286,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             log.warn("Sub-request {} returned invalid JSON", referenceId);
             return builder
                     .httpStatus(HttpStatus.BAD_GATEWAY.value())
-                    .body("Response body is not valid JSON")
+                    .body("Response body is not valid JSON, although its Content-Type says it is. Fix the endpoint response.")
                     .build();
         }
     }
@@ -371,7 +399,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         CompositeResponse errorResponse = CompositeResponse.builder()
                 .responses(new HashMap<>(tracker.getSubResponseMap()))
                 .hasErrors(true)
-                .errors(List.of(timedOut ? "Composite request timed out" : "Composite execution failed"))
+                .errors(List.of(timedOut
+                        ? "Composite request timed out before every sub-request finished. "
+                                + "Completed results are included, and running handlers may still finish."
+                        : "Composite execution failed because of an internal error. Check the server logs."))
                 .debug(debugInfo)
                 .build();
 

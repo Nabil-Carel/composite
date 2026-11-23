@@ -68,7 +68,7 @@ public class SubRequestDto {
      * expressions of the form {@code ${referenceId.property}} are resolved at runtime against
      * completed sub-responses before the request is dispatched.
      */
-    @NotBlank(message = "URL is required")
+    @NotBlank(message = "URL is required. Use an application-relative path such as /api/users/1.")
     private String url;
 
     /**
@@ -77,8 +77,8 @@ public class SubRequestDto {
      * <p>Accepted values are {@code GET}, {@code POST}, {@code PUT}, {@code DELETE},
      * and {@code PATCH}.
      */
-    @NotBlank(message = "HTTP method is required")
-    @Pattern(regexp = "^(GET|POST|PUT|DELETE|PATCH)$", message = "Invalid HTTP method")
+    @NotBlank(message = "HTTP method is required. Use GET, POST, PUT, PATCH or DELETE.")
+    @Pattern(regexp = "^(GET|POST|PUT|DELETE|PATCH)$", message = "Invalid HTTP method. Use uppercase GET, POST, PUT, PATCH or DELETE.")
     private String method;
 
     /**
@@ -88,8 +88,8 @@ public class SubRequestDto {
      * {@code ${referenceId.propertyPath}} placeholder expressions. Must match the pattern
      * {@code [a-zA-Z0-9_-]{1,50}}.
      */
-    @NotBlank(message = "Reference ID is required")
-    @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", message = "Reference ID must be alphanumeric with dashes/underscores, max 50 chars")
+    @NotBlank(message = "Reference ID is required. Give each sub-request a unique referenceId.")
+    @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", message = "Reference ID must use only letters, numbers, dashes or underscores, up to 50 characters.")
     private String referenceId;
 
     /**
@@ -118,7 +118,7 @@ public class SubRequestDto {
      */
     @JsonAnySetter
     void rejectUnknownField(String name, Object value) {
-        throw new IllegalArgumentException("Unknown sub-request field: " + name);
+        throw new IllegalArgumentException("Unknown sub-request field: " + name + ". Remove it or check its spelling.");
     }
 
     /**
@@ -127,7 +127,7 @@ public class SubRequestDto {
      *
      * @return {@code true} if the body constraint is satisfied; {@code false} otherwise
      */
-    @AssertTrue(message = "Body is required for POST/PUT/PATCH requests")
+    @AssertTrue(message = "Body is required for POST, PUT and PATCH requests. Add a 'body' field.")
     private boolean isBodyValid() {
         boolean hasBody = body != null && !body.isNull() && !body.isMissingNode();
         return method == null

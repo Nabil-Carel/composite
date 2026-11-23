@@ -72,6 +72,6 @@ public class CompositeRequest {
      */
     @JsonAnySetter
     void rejectUnknownField(String name, Object value) {
-        throw new IllegalArgumentException("Unknown composite request field: " + name);
+        throw new IllegalArgumentException("Unknown composite request field: " + name + ". Remove it or check its spelling.");
     }
 }

@@ -100,7 +100,8 @@ public final class ReferencePath {
     }
 
     private static IllegalArgumentException malformed(String expression) {
-        return new IllegalArgumentException("Malformed reference: " + expression);
+        return new IllegalArgumentException("Malformed reference: " + expression
+                + ". Use a form like ${a.id}, ${a.items[0].name} or ${a['key.with.dots']}.");
     }
 
     /**
@@ -133,7 +134,8 @@ public final class ReferencePath {
 
             if (next == null) {
                 throw new ReferenceResolutionException(
-                        "Property '" + step.key() + "' not found in response '" + referenceId + "'",
+                        "Property '" + step.key() + "' not found in response '" + referenceId
+                                + "'. References use the JSON field names in that response.",
                         referenceId);
             }
             current = next;

@@ -363,7 +363,7 @@ class CompositeRequestValidatorImplTest {
 
         List<String> errors = validatorService.validateRequest(request);
 
-        assertThat(errors).containsExactly("At least one sub-request is required");
+        assertThat(errors).containsExactly("At least one sub-request is required. Add an entry to 'subRequests'.");
     }
 
     @Test

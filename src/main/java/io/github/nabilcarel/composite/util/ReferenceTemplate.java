@@ -45,7 +45,8 @@ public final class ReferenceTemplate {
             String expression = text.substring(start + 2, end);
 
             if (expression.indexOf('$') >= 0 || expression.indexOf('{') >= 0) {
-                throw new IllegalArgumentException("Nested references are not supported: " + text);
+                throw new IllegalArgumentException("Nested references are not supported: " + text
+                        + ". Use a single reference such as ${a.id}.");
             }
 
             if (expression.isEmpty()) {

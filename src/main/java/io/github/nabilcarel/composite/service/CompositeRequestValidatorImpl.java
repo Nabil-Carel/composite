@@ -19,6 +19,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeRequestValidatorImpl implements CompositeRequestValidator {
+    private static final String URL_RULES = "Use an application-relative path such as /api/users/1, "
+            + "without a host, fragment, '..' segment, encoded separator or ';' parameter.";
+
     private final Validator validator;
     private final EndpointRegistry endpointRegistry;
     private final CompositeProperties properties;
@@ -27,18 +30,19 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         List<String> errors = new ArrayList<>();
 
         if (request.getSubRequests() == null || request.getSubRequests().isEmpty()) {
-            errors.add("At least one sub-request is required");
+            errors.add("At least one sub-request is required. Add an entry to 'subRequests'.");
             return errors;
         }
 
         if (request.getSubRequests().stream().anyMatch(Objects::isNull)) {
-            errors.add("Sub-requests must not be null");
+            errors.add("Sub-requests must not be null. Remove null entries from 'subRequests'.");
             return errors;
         }
 
         if (request.getSubRequests().size() > properties.getMaxSubRequestsPerComposite()) {
             errors.add("Too many sub-requests: " + request.getSubRequests().size() +
-                    " exceeds the maximum of " + properties.getMaxSubRequestsPerComposite());
+                    " exceeds the maximum of " + properties.getMaxSubRequestsPerComposite() +
+                    ". Split the work into smaller batches.");
             log.error(errors.get(0));
             return errors;
         }
@@ -47,7 +51,8 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
         for (int i = 0; i < request.getSubRequests().size(); i++) {
             if(!references.add(request.getSubRequests().get(i).getReferenceId())){
-                errors.add("Duplicate reference ID found: " + request.getSubRequests().get(i).getReferenceId());
+                errors.add("Duplicate reference ID found: '" + request.getSubRequests().get(i).getReferenceId()
+                        + "'. Each sub-request needs a unique referenceId.");
                 log.error(errors.get(errors.size() - 1));
             }
         }
@@ -57,7 +62,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
         if (!violations.isEmpty()) {
             for (ConstraintViolation<CompositeRequest> violation : violations) {
-                errors.add(violation.getMessage());
+                errors.add(describe(violation));
             }
 
             log.error("Invalid request {}", errors);
@@ -70,23 +75,13 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         for (SubRequestDto subRequest : request.getSubRequests()) {
             if (subRequest.getHeaders() != null
                     && subRequest.getHeaders().values().stream().anyMatch(Objects::isNull)) {
-                headerErrors.add("[" + subRequest.getReferenceId() + "] Header values must not be null");
+                headerErrors.add("[" + subRequest.getReferenceId() + "] Header values must not be null. Use a string or remove the header.");
             }
         }
 
         if (!headerErrors.isEmpty()) {
             errors.addAll(headerErrors);
             return errors;
-        }
-
-        // Validate unique reference IDs
-        Set<String> referenceIds = new HashSet<>();
-
-        for (SubRequestDto subRequest : request.getSubRequests()) {
-            if (!referenceIds.add(subRequest.getReferenceId())) {
-                errors.add("Duplicate reference ID found: " + subRequest.getReferenceId());
-                log.error(errors.get(errors.size() - 1));
-            }
         }
 
         // Validate dependencies
@@ -116,7 +111,8 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             for (String dependency : new SubRequest(request).getDependencies()) {
                 if (!dependencyGraph.containsKey(dependency)) {
                     errors.add("Missing dependency reference: '" + dependency +
-                                    "' for request: " + request.getReferenceId());
+                                    "' for request: " + request.getReferenceId() +
+                                    ". Add a sub-request with that referenceId or fix the placeholder.");
                     log.error(errors.get(errors.size() - 1));
                 }
             }
@@ -130,7 +126,9 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         for (String referenceId : dependencyGraph.keySet()) {
             if (!visited.contains(referenceId) &&
                 hasCircularDependency(referenceId, dependencyGraph, visited, currentPath)) {
-                    errors.add("Circular dependency detected in path: " + currentPath);
+                    errors.add("Circular dependency involving: " + String.join(", ", new TreeSet<>(currentPath))
+                            + ". Remove one of the references so the sub-requests can run in order.");
+                    currentPath.clear();
                     log.error(errors.get(errors.size() - 1));
                     hasCircular = true;
             }
@@ -141,7 +139,8 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             int currentDepth = calculateMaxDependencyDepth(dependencyGraph);
 
             if (currentDepth > properties.getMaxDepth()) {
-                errors.add("Maximum dependency depth exceeded: current=" + currentDepth + " maxDepth=" + properties.getMaxDepth());
+                errors.add("Maximum dependency depth exceeded: the longest chain is " + currentDepth
+                        + " but the limit is " + properties.getMaxDepth() + ". Shorten the chain of references.");
                 log.error(errors.get(errors.size() - 1));
             }
         }
@@ -244,12 +243,16 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             errors.add("[" + refId + "] " + methodError);
         }
 
+        String urlError = validateUrlTemplate(request.getUrl());
+
         // Validate endpoint availability
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(request.getMethod(),
                 request.getUrl());
 
-        if (endpointInfo.isEmpty()) {
-            String error = "[" + refId + "] Endpoint not available for composite execution: " + request.getMethod() + " " + request.getUrl();
+        // A malformed URL already has a more specific error
+        if (endpointInfo.isEmpty() && urlError == null) {
+            String error = "[" + refId + "] Endpoint not available for composite execution: " + request.getMethod()
+                    + " " + request.getUrl() + ". Check the method and path, and that the handler has @CompositeEndpoint.";
             errors.add(error);
             log.error(error);
         }
@@ -259,9 +262,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             errors.add("[" + refId + "] " + bodyError);
         }
 
-        // Validate URL format
-        String urlError = validateUrlTemplate(request.getUrl());
-
+        // Report URL format errors
         if (urlError != null) {
             errors.add("[" + refId + "] " + urlError);
         }
@@ -270,7 +271,8 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         if (request.getHeaders() != null) {
             for (String headerName : request.getHeaders().keySet()) {
                 if (!SubRequestHeaderPolicy.isClientHeaderAllowed(headerName, properties)) {
-                    String error = "[" + refId + "] Header not allowed on a sub-request: " + headerName;
+                    String error = "[" + refId + "] Header not allowed on a sub-request: " + headerName
+                            + ". Remove it. Credentials are forwarded from the outer request.";
                     errors.add(error);
                     log.error(error);
                 }
@@ -286,7 +288,7 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             return null;
         } catch (IllegalArgumentException e) {
             log.error("Invalid URL format: {}", url);
-            return "Invalid URL format: " + url;
+            return "Invalid URL format: " + url + ". " + URL_RULES;
         }
     }
 
@@ -302,12 +304,12 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
                 .contains(request.getMethod().toUpperCase());
 
         if (requiresBody && !hasBody) {
-            errors.add("Request body is required for " + request.getMethod() + " method");
+            errors.add("Request body is required for " + request.getMethod() + " method. Add a 'body' field.");
             log.error(errors.get(0));
         }
 
         if (forbidsBody && hasBody) {
-            errors.add("Request body is not allowed for " + request.getMethod() + " method");
+            errors.add("Request body is not allowed for " + request.getMethod() + " method. Remove the 'body' field.");
             log.error(errors.get(0)); // This if and the previous one are mutually exclusive
         }
 
@@ -316,15 +318,14 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
 
     private String validateHttpMethod(String method) {
         if (method == null || method.trim().isEmpty()) {
-            return "HTTP method cannot be null or empty";
+            return "HTTP method is required. Use GET, POST, PUT, PATCH or DELETE.";
         }
 
         Set<String> validMethods = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
         String normalizedMethod = method.toUpperCase();
 
         if (!validMethods.contains(normalizedMethod)) {
-            return "Invalid HTTP method: " + method +
-                    ". Valid methods are: " + String.join(", ", validMethods);
+            return "Invalid HTTP method: " + method + ". Use GET, POST, PUT, PATCH or DELETE.";
         }
 
          return null;
@@ -335,8 +336,13 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             return null;
         }
 
-        String error = "Invalid URL format: " + url;
+        String error = "Invalid URL format: " + url + ". " + URL_RULES;
         log.error(error);
         return error;
+    }
+
+    private static String describe(ConstraintViolation<?> violation) {
+        String field = String.valueOf(violation.getPropertyPath()).replace(".bodyValid", ".body");
+        return field + ": " + violation.getMessage();
     }
 }

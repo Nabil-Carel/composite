@@ -194,7 +194,7 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             tracker.addResponse(id, SubResponse.builder()
                     .referenceId(id)
                     .httpStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
-                    .body("Sub-request could not be dispatched")
+                    .body("Sub-request could not be dispatched. Check the server logs.")
                     .build());
             return;
         }
@@ -236,7 +236,8 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
         SubResponse failedDependencyResponse = SubResponse.builder()
                 .httpStatus(HttpStatus.FAILED_DEPENDENCY.value()) // Failed Dependency
                 .referenceId(subRequestId)
-                .body("Failed Dependency: One or more dependencies failed: " + String.join(", ", failedDeps))
+                .body("Failed Dependency: not executed because these sub-requests failed: "
+                        + String.join(", ", new java.util.TreeSet<>(failedDeps)))
                 .build();
         
         tracker.addResponse(subRequestId, failedDependencyResponse);

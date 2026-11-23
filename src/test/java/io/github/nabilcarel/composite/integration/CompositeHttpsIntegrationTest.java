@@ -125,6 +125,9 @@ class CompositeHttpsIntegrationTest {
 
             assertThat(response.get("hasErrors").asBoolean()).isTrue();
             assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
+            assertThat(response.at("/responses/a/body").asText())
+                .isEqualTo("Error executing subrequest: the endpoint could not be reached.")
+                .doesNotContain("localhost", String.valueOf(port));
         }
     }
 

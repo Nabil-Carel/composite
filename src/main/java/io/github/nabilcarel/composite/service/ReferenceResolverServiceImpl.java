@@ -61,7 +61,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             remaining -= size;
             if (remaining < 0) {
                 throw new ReferenceResolutionException(
-                        "Referenced data exceeds composite.max-resolved-size", expression);
+                        "Referenced data is too large for one sub-request. Reference smaller values.", expression);
             }
         }
 
@@ -161,7 +161,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     private JsonNode resolveNonNull(String expression, String batchId) {
         JsonNode value = resolve(expression, batchId);
         if (value.isNull()) {
-            throw new ReferenceResolutionException("Resolved value is null for: " + expression, expression);
+            throw new ReferenceResolutionException("${" + expression + "} is null. Reference a field that has a value.", expression);
         }
         return value;
     }
@@ -171,7 +171,8 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
         if (!value.isValueNode()) {
             throw new ReferenceResolutionException(
-                    "Reference must be a string, number or boolean here: " + expression, expression);
+                    "${" + expression + "} is an object or array, so it cannot be used in a URL, header or larger text. "
+                            + "Reference a field inside it, or use it as an entire body value.", expression);
         }
 
         // Charge plain decimals by their rendered length, which an exponent can make very large.
@@ -203,7 +204,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         SubResponse subResponse = responses.get(referenceId);
         if (subResponse == null) {
             throw new ReferenceResolutionException(
-                    "No response found for reference ID: " + referenceId,
+                    "No response found for reference ID: " + referenceId + ". Check the referenceId in the placeholder.",
                     referenceId,
                     String.join(", ", responses.keySet()));
         }
@@ -211,7 +212,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         Object body = subResponse.getBody();
         if (body == null) {
             throw new ReferenceResolutionException(
-                    "No response body found for reference ID: " + referenceId,
+                    "No response body found for reference ID: " + referenceId + ". That sub-request returned no content.",
                     referenceId,
                     String.join(", ", responses.keySet()));
         }

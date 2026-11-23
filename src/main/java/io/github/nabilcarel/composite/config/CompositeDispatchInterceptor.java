@@ -4,8 +4,11 @@ import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Semaphore;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.lang.Nullable;
 import org.springframework.web.method.HandlerMethod;
@@ -57,12 +60,14 @@ public class CompositeDispatchInterceptor implements AsyncHandlerInterceptor {
 
         if (!(handler instanceof HandlerMethod handlerMethod)
                 || !handlerMethod.hasMethodAnnotation(CompositeEndpoint.class)) {
-            response.setStatus(HttpStatus.FORBIDDEN.value());
+            reject(response, HttpStatus.FORBIDDEN,
+                    "This route is not available for composite execution.");
             return false;
         }
 
         if (!permits.tryAcquire()) {
-            response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+            reject(response, HttpStatus.SERVICE_UNAVAILABLE,
+                    "Too many sub-requests are running. Retry later.");
             return false;
         }
 
@@ -83,6 +88,17 @@ public class CompositeDispatchInterceptor implements AsyncHandlerInterceptor {
                                 @NonNull Object handler,
                                 @Nullable Exception ex) {
         release(request);
+    }
+
+    private static void reject(HttpServletResponse response, HttpStatus status, String message) {
+        response.setStatus(status.value());
+        response.setContentType(MediaType.TEXT_PLAIN_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        try {
+            response.getWriter().write(message);
+        } catch (IOException e) {
+            // The status is already set, and the client may have disconnected.
+        }
     }
 
     private void release(HttpServletRequest request) {
