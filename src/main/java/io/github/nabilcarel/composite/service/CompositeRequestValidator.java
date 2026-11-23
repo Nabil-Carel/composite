@@ -10,9 +10,8 @@ import java.util.Set;
  * Validates a {@link CompositeRequest} and its constituent {@link SubRequestDto sub-requests}
  * before execution begins.
  *
- * <p>Validation is performed eagerly in the
- * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter filter}, before
- * any sub-requests are dispatched. Any errors are collected into a list and surfaced to the
+ * <p>Validation is performed by {@link CompositeRequestService#execute}, before any
+ * sub-requests are dispatched. Any errors are collected into a list and surfaced to the
  * caller as a {@code 400 Bad Request} response; no sub-requests are executed if validation
  * fails.
  *

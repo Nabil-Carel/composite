@@ -7,16 +7,17 @@ import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.service.*;
-import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientResponse;
@@ -57,9 +58,8 @@ class CompositeRequestServiceImplTest {
     private ClientResponse clientResponse;
     @Mock
     private ResponseTracker responseTracker;
-    @Mock
-    private HttpServletRequest servletRequest;
 
+    private final SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), null);
     private ObjectMapper objectMapper;
     private CompositeProperties properties;
     private ConcurrentMap<String, ResponseTracker> responseStore;
@@ -97,7 +97,7 @@ class CompositeRequestServiceImplTest {
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.empty());
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -119,7 +119,7 @@ class CompositeRequestServiceImplTest {
         when(endpointRegistry.getEndpointInformations("GET", "/api/malicious/path"))
             .thenReturn(Optional.empty());
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -141,7 +141,7 @@ class CompositeRequestServiceImplTest {
         when(referenceResolver.resolveUrl(any(), anyString()))
             .thenThrow(new RuntimeException("Reference not found"));
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -165,7 +165,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn("Invalid URL format");
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -190,7 +190,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -213,7 +213,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -238,7 +238,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -260,7 +260,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -282,7 +282,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -307,7 +307,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
         verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
@@ -337,7 +337,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         verify(responseTracker).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
     }
@@ -369,7 +369,7 @@ class CompositeRequestServiceImplTest {
             return handler.apply(clientResponse);
         });
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
 
         verify(responseTracker).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
     }

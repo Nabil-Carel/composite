@@ -3,13 +3,15 @@ package io.github.nabilcarel.composite.service;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.SubRequestCoordinator;
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import lombok.Getter;
 import org.springframework.http.HttpStatus;
+import reactor.core.Disposable;
+import reactor.core.Disposables;
 import reactor.core.publisher.Mono;
 
 /**
@@ -41,7 +43,8 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     private final Map<String, SubRequest> requestMap;
     private final CompositeRequestService requestService;
     private final String batchId;
-    private final HttpServletRequest servletRequest;
+    private final SubRequestContext context;
+    private final Disposable.Composite subscriptions = Disposables.composite();
 
     public CompositeBatchContextImpl(
             ResponseTracker tracker,
@@ -49,19 +52,23 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             Map<String, SubRequest> requestMap,
             CompositeRequestService requestService,
             String batchId,
-            HttpServletRequest servletRequest
+            SubRequestContext context
     ) {
         this.tracker = tracker;
         this.coordinator = coordinator;
         this.requestMap = requestMap;
         this.requestService = requestService;
         this.batchId = batchId;
-        this.servletRequest = servletRequest;
+        this.context = context;
 
         tracker.setOnSubRequestResolved(this::handleSubRequestResolved);
     }
 
     private void handleSubRequestResolved(String resolvedId) {
+        if (subscriptions.isDisposed()) {
+            return;
+        }
+
         List<String> nowReady = coordinator.markResolved(resolvedId);
         List<Mono<Void>> monos = nowReady.stream()
                 .filter(coordinator::markInProgress)
@@ -71,10 +78,10 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
                     if (hasFailedDependency(subRequest)) {
                         return createFailedDependencyResponse(id, subRequest);
                     }
-                    return requestService.forwardSubrequest(subRequest, batchId, servletRequest);
+                    return requestService.forwardSubrequest(subRequest, batchId, context);
                 })
                 .toList();
-        Mono.when(monos).subscribe();
+        subscriptions.add(Mono.when(monos).subscribe());
     }
 
     private boolean hasFailedDependency(SubRequest subRequest) {
@@ -116,8 +123,13 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     public void startInitialRequests()  {
         List<Mono<Void>> monos = coordinator.getInitialReadySubRequests().stream()
                 .filter(coordinator::markInProgress)
-                .map(id -> requestService.forwardSubrequest(requestMap.get(id), batchId, servletRequest))
+                .map(id -> requestService.forwardSubrequest(requestMap.get(id), batchId, context))
                 .toList();
-        Mono.when(monos).subscribe();
+        subscriptions.add(Mono.when(monos).subscribe());
+    }
+
+    @Override
+    public void cancel() {
+        subscriptions.dispose();
     }
 }

@@ -361,13 +361,9 @@ class CompositeRequestValidatorImplTest {
         CompositeRequest request = new CompositeRequest();
         request.setSubRequests(java.util.Collections.emptyList());
 
-        when(validator.validate(any())).thenReturn(java.util.Set.of());
-
         List<String> errors = validatorService.validateRequest(request);
-        
-        // Empty requests might be valid or invalid depending on business logic
-        // This test documents current behavior
-        assertThat(errors).isNotNull();
+
+        assertThat(errors).containsExactly("At least one sub-request is required");
     }
 
     @Test

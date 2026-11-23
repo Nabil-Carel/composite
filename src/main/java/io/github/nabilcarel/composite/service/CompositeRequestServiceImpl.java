@@ -1,28 +1,41 @@
 package io.github.nabilcarel.composite.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
+import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
+import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.request.SubRequestContext;
+import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -52,7 +65,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
     public Mono<Void> forwardSubrequest(
             SubRequest subRequest,
             String requestId,
-            HttpServletRequest servletRequest
+            SubRequestContext context
     ) {
 
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(
@@ -88,7 +101,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         }
 
         if (properties.isDebugEnabled()) {
-            CompositeDebugInfo debugInfo = (CompositeDebugInfo) servletRequest.getAttribute("compositeDebug");
+            CompositeDebugInfo debugInfo = context.debugInfo();
             if (debugInfo != null) {
                 CompositeDebugInfo.SubRequestDebugInfo subDebug = CompositeDebugInfo.SubRequestDebugInfo.builder()
                         .originalUrl(originalUrl)
@@ -126,10 +139,11 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         WebClient.RequestBodySpec requestBodySpec = webClient.method(HttpMethod.valueOf(subRequest.getMethod().toUpperCase()))
                 .uri(resolvedUrl)
                 .headers(httpHeaders -> {
-                    authForwardingService.forwardAuthentication(servletRequest, httpHeaders);
+                    httpHeaders.addAll(context.forwardedHeaders());
                     if (subRequest.getResolvedHeaders() != null) {
                         subRequest.getResolvedHeaders().forEach(httpHeaders::set);
                     }
+                    httpHeaders.set(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
 
                     if(properties.getHeaderInjection().isEnabled()){
                         httpHeaders.add(properties.getHeaderInjection().getRequestHeader(), "true");
@@ -236,73 +250,79 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         }
     }
 
-    private void cleanup(String requestId, HttpServletRequest request, HttpServletResponse response) {
-        responseStore.remove(requestId);
-        request.removeAttribute("composite");
-        try {
-            if (!response.isCommitted()) {
-                response.reset();
-            }
-        } catch (Exception e) {
-            log.debug("Could not reset response: {}", e.getMessage());
+    @Override
+    public CompletableFuture<ResponseEntity<CompositeResponse>> execute(
+            CompositeRequest compositeRequest, HttpServletRequest request) {
+        List<String> errors = compositeRequestValidator.validateRequest(compositeRequest);
+
+        if (!errors.isEmpty()) {
+            return CompletableFuture.completedFuture(ResponseEntity.badRequest().body(
+                    CompositeResponse.builder().hasErrors(true).errors(errors).build()));
         }
+
+        String requestId = UUID.randomUUID().toString();
+        Map<String, SubRequest> requestMap = compositeRequest.getSubRequests().stream()
+                .collect(Collectors.toMap(SubRequestDto::getReferenceId, SubRequest::new));
+        Map<String, Set<String>> dependencyMap = requestMap.values().stream()
+                .collect(Collectors.toMap(SubRequest::getReferenceId, SubRequest::getDependencies));
+
+        CompositeDebugInfo debugInfo = properties.isDebugEnabled()
+                ? CompositeDebugInfo.builder()
+                        .dependencyGraph(dependencyMap)
+                        .resolvedRequests(new ConcurrentHashMap<>())
+                        .build()
+                : null;
+
+        HttpHeaders forwardedHeaders = new HttpHeaders();
+        authForwardingService.forwardAuthentication(request, forwardedHeaders);
+        SubRequestContext context = new SubRequestContext(
+                HttpHeaders.readOnlyHttpHeaders(forwardedHeaders), debugInfo);
+
+        ResponseTracker tracker = new ResponseTrackerImpl(requestMap.size());
+        responseStore.put(requestId, tracker);
+        CompositeBatchContext batchContext = new CompositeBatchContextImpl(
+                tracker, new SubRequestCoordinatorImpl(dependencyMap), requestMap, this, requestId, context);
+
+        CompletableFuture<ResponseEntity<CompositeResponse>> result = tracker.getFuture()
+                .orTimeout(properties.getRequestTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .handle((response, failure) -> {
+                    batchContext.cancel();
+                    responseStore.remove(requestId);
+                    return toResponseEntity(response, failure, tracker, debugInfo);
+                });
+
+        try {
+            batchContext.startInitialRequests();
+        } catch (RuntimeException e) {
+            tracker.cancel(e);
+        }
+
+        return result;
     }
 
-    public CompletableFuture<ResponseEntity<CompositeResponse>> execute(
-            HttpServletRequest request, HttpServletResponse response) {
-        String requestId = (String) request.getAttribute("requestId");
-        boolean hasErrors = (Boolean) request.getAttribute("hasErrors");
-
-        if (!hasErrors) {
-            ResponseTracker responseTracker = responseStore.get(requestId);
-            if (responseTracker == null) {
-                log.error("ResponseTracker not found for requestId: {}", requestId);
-                CompositeResponse errorResponse = CompositeResponse.builder()
-                        .hasErrors(true)
-                        .errors(List.of("Internal error: ResponseTracker not found"))
-                        .build();
-                return CompletableFuture.completedFuture(
-                        ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse)
-                );
-            }
-
-            return responseTracker.getFuture()
-                    .orTimeout(properties.getRequestTimeout().getSeconds(), TimeUnit.SECONDS)
-                    .thenApply(compositeResponse -> {
-                        try {
-                            if (properties.isDebugEnabled()) {
-                                CompositeDebugInfo debugInfo = (CompositeDebugInfo) request.getAttribute("compositeDebug");
-                                compositeResponse.setDebug(debugInfo);
-                            }
-                            return ResponseEntity.ok(compositeResponse);
-                        } finally {
-                            cleanup(requestId, request, response);
-                        }
-                    })
-                    .exceptionally(ex -> {
-                        log.error("Execution failed: {}", ex.getMessage(), ex);
-                        try {
-                            CompositeResponse errorResponse = CompositeResponse.builder()
-                                    .hasErrors(true)
-                                    .errors(List.of("Execution failed: " + ex.getMessage()))
-                                    .build();
-                            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-                        } finally {
-                            cleanup(requestId, request, response);
-                        }
-                    });
-        } else {
-            List<String> errors = (List<String>) request.getAttribute("errors");
-            CompositeResponse compositeResponse = CompositeResponse.builder()
-                    .hasErrors(true)
-                    .errors(errors)
-                    .build();
-            CompletableFuture<CompositeResponse> future = new CompletableFuture<>();
-            future.complete(compositeResponse);
-            return future.thenApply(compResponse ->
-                    ResponseEntity.badRequest().body(compResponse)
-            );
+    private ResponseEntity<CompositeResponse> toResponseEntity(CompositeResponse response, Throwable failure,
+                                                               ResponseTracker tracker, CompositeDebugInfo debugInfo) {
+        if (failure == null) {
+            response.setDebug(debugInfo);
+            return ResponseEntity.ok(response);
         }
+
+        Throwable cause = failure instanceof CompletionException && failure.getCause() != null
+                ? failure.getCause()
+                : failure;
+        boolean timedOut = cause instanceof TimeoutException;
+        log.error("Composite execution failed: {}", cause.getMessage(), cause);
+
+        CompositeResponse errorResponse = CompositeResponse.builder()
+                .responses(new HashMap<>(tracker.getSubResponseMap()))
+                .hasErrors(true)
+                .errors(List.of(timedOut ? "Composite request timed out" : "Composite execution failed"))
+                .debug(debugInfo)
+                .build();
+
+        return ResponseEntity
+                .status(timedOut ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(errorResponse);
     }
 
     public Set<EndpointInfo> getAvailableEndpoints() {

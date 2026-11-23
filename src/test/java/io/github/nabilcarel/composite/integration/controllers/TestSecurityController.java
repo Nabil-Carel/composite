@@ -5,7 +5,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Endpoints used by the security regression tests. Handlers without
@@ -88,5 +90,18 @@ public class TestSecurityController {
     public Map<String, String> headers(@RequestHeader Map<String, String> headers) {
         lastHeaders = headers;
         return Map.of("ok", "true");
+    }
+
+    @CompositeEndpoint(Map.class)
+    @GetMapping("/delay/{millis}")
+    public Map<String, Object> delay(@PathVariable("millis") long millis) throws InterruptedException {
+        Thread.sleep(millis);
+        return Map.of("id", "delayed");
+    }
+
+    @CompositeEndpoint(Map.class)
+    @GetMapping("/missing")
+    public Map<String, Object> missing() {
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "missing");
     }
 }

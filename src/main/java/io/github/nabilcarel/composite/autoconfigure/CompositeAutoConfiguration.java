@@ -1,10 +1,10 @@
 package io.github.nabilcarel.composite.autoconfigure;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
-import io.github.nabilcarel.composite.config.filter.CompositeRequestFilter;
 import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
@@ -21,16 +21,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.core.Ordered;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.util.DefaultUriBuilderFactory;
 import reactor.netty.http.client.HttpClient;
 
@@ -56,9 +56,8 @@ import reactor.netty.http.client.HttpClient;
  *       in-flight
  *       {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker}
  *       store.</li>
- *   <li>A {@link org.springframework.boot.web.servlet.FilterRegistrationBean} for the
- *       {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter
- *       CompositeRequestFilter}.</li>
+ *   <li>A {@link org.springframework.web.servlet.config.annotation.WebMvcConfigurer} that
+ *       registers the {@link CompositeDispatchInterceptor}.</li>
  * </ul>
  *
  * <p>The {@code compositeWebClient} bean is created lazily and resolves the loopback port
@@ -75,7 +74,6 @@ import reactor.netty.http.client.HttpClient;
 @EnableConfigurationProperties({CompositeLoopbackProperties.class, CompositeProperties.class})
 @Slf4j
 @Import({
-        CompositeRequestFilter.class,
         CompositeController.class,
         EndpointRegistry.class,
         AuthenticationForwardingServiceImpl.class,
@@ -106,23 +104,19 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Registers the {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter
-     * CompositeRequestFilter} as a servlet filter.
+     * Registers the interceptor that verifies the handler selected for each loopback
+     * sub-request.
      *
-     * <p>The filter is mapped to the URL pattern defined by
-     * {@code composite.filter-pattern} and runs near the end of the filter
-     * chain ({@link Ordered#LOWEST_PRECEDENCE} minus one).
-     *
-     * @param filter the filter bean to register
-     * @return the configured {@link FilterRegistrationBean}
+     * @return the MVC configurer
      */
     @Bean
-    public FilterRegistrationBean<CompositeRequestFilter> compositeFilter(CompositeRequestFilter filter) {
-        FilterRegistrationBean<CompositeRequestFilter> registrationBean = new FilterRegistrationBean<>();
-        registrationBean.setFilter(filter);
-        registrationBean.addUrlPatterns(properties.getFilterPattern());
-        registrationBean.setOrder(Ordered.LOWEST_PRECEDENCE - 1);
-        return registrationBean;
+    public WebMvcConfigurer compositeDispatchConfigurer() {
+        return new WebMvcConfigurer() {
+            @Override
+            public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(new CompositeDispatchInterceptor());
+            }
+        };
     }
 
     /**

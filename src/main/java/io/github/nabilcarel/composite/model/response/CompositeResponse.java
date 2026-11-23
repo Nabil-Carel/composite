@@ -1,6 +1,7 @@
 package io.github.nabilcarel.composite.model.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import java.util.List;
 import java.util.Map;
 import lombok.*;
@@ -36,6 +37,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonNaming
 public class CompositeResponse {
 
     /**

@@ -7,13 +7,14 @@ import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.service.CompositeBatchContextImpl;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
-import jakarta.servlet.http.HttpServletRequest;
+import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
@@ -32,9 +33,8 @@ class CompositeBatchContextImplTest {
     private SubRequestCoordinator coordinator;
     @Mock
     private CompositeRequestService requestService;
-    @Mock
-    private HttpServletRequest servletRequest;
 
+    private final SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), null);
     private Map<String, SubRequest> requestMap;
     private static final String BATCH_ID = "test-batch-id";
 
@@ -45,7 +45,7 @@ class CompositeBatchContextImplTest {
 
     @Test
     void constructor_setsOnSubRequestResolvedCallback() {
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         verify(tracker).setOnSubRequestResolved(any());
     }
@@ -57,15 +57,15 @@ class CompositeBatchContextImplTest {
 
         when(coordinator.getInitialReadySubRequests()).thenReturn(List.of("a"));
         when(coordinator.markInProgress("a")).thenReturn(true);
-        when(requestService.forwardSubrequest(eq(subRequest), eq(BATCH_ID), eq(servletRequest)))
+        when(requestService.forwardSubrequest(eq(subRequest), eq(BATCH_ID), eq(requestContext)))
                 .thenReturn(Mono.empty());
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         batchContext.startInitialRequests();
 
-        verify(requestService).forwardSubrequest(subRequest, BATCH_ID, servletRequest);
+        verify(requestService).forwardSubrequest(subRequest, BATCH_ID, requestContext);
     }
 
     @Test
@@ -77,7 +77,7 @@ class CompositeBatchContextImplTest {
         when(coordinator.markInProgress("a")).thenReturn(false);
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         batchContext.startInitialRequests();
 
@@ -93,16 +93,16 @@ class CompositeBatchContextImplTest {
 
         when(coordinator.getInitialReadySubRequests()).thenReturn(List.of("a", "b"));
         when(coordinator.markInProgress(anyString())).thenReturn(true);
-        when(requestService.forwardSubrequest(any(), eq(BATCH_ID), eq(servletRequest)))
+        when(requestService.forwardSubrequest(any(), eq(BATCH_ID), eq(requestContext)))
                 .thenReturn(Mono.empty());
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         batchContext.startInitialRequests();
 
-        verify(requestService).forwardSubrequest(reqA, BATCH_ID, servletRequest);
-        verify(requestService).forwardSubrequest(reqB, BATCH_ID, servletRequest);
+        verify(requestService).forwardSubrequest(reqA, BATCH_ID, requestContext);
+        verify(requestService).forwardSubrequest(reqB, BATCH_ID, requestContext);
     }
 
     @Test
@@ -115,15 +115,15 @@ class CompositeBatchContextImplTest {
         when(coordinator.markResolved("a")).thenReturn(List.of("b"));
         when(coordinator.markInProgress("b")).thenReturn(true);
         when(tracker.getSubResponseMap()).thenReturn(Map.of());
-        when(requestService.forwardSubrequest(eq(reqB), eq(BATCH_ID), eq(servletRequest)))
+        when(requestService.forwardSubrequest(eq(reqB), eq(BATCH_ID), eq(requestContext)))
                 .thenReturn(Mono.empty());
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
 
-        verify(requestService).forwardSubrequest(reqB, BATCH_ID, servletRequest);
+        verify(requestService).forwardSubrequest(reqB, BATCH_ID, requestContext);
     }
 
     @Test
@@ -140,7 +140,7 @@ class CompositeBatchContextImplTest {
         when(coordinator.markInProgress("b")).thenReturn(true);
         when(tracker.getSubResponseMap()).thenReturn(Map.of("a", failedResponse));
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
@@ -160,7 +160,7 @@ class CompositeBatchContextImplTest {
 
         when(coordinator.markResolved("a")).thenReturn(List.of());
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
@@ -169,9 +169,23 @@ class CompositeBatchContextImplTest {
     }
 
     @Test
+    void cancel_preventsDependentDispatch() {
+        ArgumentCaptor<Consumer<String>> callbackCaptor = ArgumentCaptor.forClass(Consumer.class);
+        CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+        verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
+
+        batchContext.cancel();
+        callbackCaptor.getValue().accept("a");
+
+        verify(coordinator, never()).markResolved(any());
+        verify(requestService, never()).forwardSubrequest(any(), any(), any());
+    }
+
+    @Test
     void getTracker_returnsTrackerInstance() {
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, servletRequest);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
 
         assertThat(batchContext.getTracker()).isSameAs(tracker);
     }

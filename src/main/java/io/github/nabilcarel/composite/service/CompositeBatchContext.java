@@ -6,14 +6,12 @@ package io.github.nabilcarel.composite.service;
  * {@link io.github.nabilcarel.composite.model.SubRequestCoordinator SubRequestCoordinator},
  * and {@link CompositeRequestService}.
  *
- * <p>A {@code CompositeBatchContext} is created once per composite request by the
- * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter filter} and
- * bridges the reactive sub-request completion events to the synchronous dependency graph:
- * each time a sub-request completes, the context consults the coordinator to find newly-ready
- * dependents and dispatches them.
+ * <p>A {@code CompositeBatchContext} is created once per composite request by
+ * {@link CompositeRequestService#execute} and bridges the reactive sub-request completion
+ * events to the synchronous dependency graph: each time a sub-request completes, the context
+ * consults the coordinator to find newly-ready dependents and dispatches them.
  *
  * @see CompositeBatchContextImpl
- * @see io.github.nabilcarel.composite.config.filter.CompositeRequestFilter
  * @since 0.0.1
  */
 public interface CompositeBatchContext {
@@ -28,4 +26,11 @@ public interface CompositeBatchContext {
      * {@link CompositeRequestService}.
      */
     void startInitialRequests();
+
+    /**
+     * Cancels in-flight loopback calls and prevents further sub-requests from starting.
+     *
+     * <p>This method is idempotent. It cannot stop a server handler that is already running.
+     */
+    void cancel();
 }

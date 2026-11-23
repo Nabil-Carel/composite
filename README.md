@@ -203,7 +203,7 @@ The Composite Endpoint Library acts as an intelligent request orchestrator that 
 
 ### Request Processing Flow
 
-1. **Request Interception**: A filter intercepts incoming requests to `/api/composite/execute`
+1. **Request Acceptance**: Spring MVC authenticates, negotiates and binds the request to `/api/composite/execute`
 2. **Validation**: Validates the composite request structure and checks for circular dependencies
 3. **Dependency Analysis**: Parses subrequests and builds a dependency graph
 4. **Parallel Execution**: Independent requests execute in parallel using WebFlux's `WebClient`
@@ -239,7 +239,7 @@ Authorization: Bearer <token>
 
 **What happens internally:**
 
-1. Filter intercepts the composite request and validates structure
+1. The composite controller receives the accepted request and validates its structure
 2. First subrequest: WebClient makes GET to `http://localhost:8080/api/account/123`
     - Authorization header automatically forwarded from parent request
     - Request goes through full Spring Security filter chain

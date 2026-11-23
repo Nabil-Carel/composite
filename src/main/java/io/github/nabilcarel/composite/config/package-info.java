@@ -11,11 +11,9 @@
  *       maintains the allowlist of
  *       {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint @CompositeEndpoint}-annotated
  *       methods.</li>
+ *   <li>{@link io.github.nabilcarel.composite.config.CompositeDispatchInterceptor} — verifies
+ *       the handler Spring selected for each loopback sub-request.</li>
  * </ul>
- *
- * <p>The {@code filter} sub-package contains the
- * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter}, which
- * orchestrates the composite execution pipeline before requests reach the controller.
  *
  * @see io.github.nabilcarel.composite.autoconfigure.CompositeAutoConfiguration
  */

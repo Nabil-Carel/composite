@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -56,6 +57,7 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.USE_DEFAULTS)
+@JsonNaming
 public class SubRequestDto {
 
     /**
@@ -118,7 +120,8 @@ public class SubRequestDto {
     @AssertTrue(message = "Body is required for POST/PUT/PATCH requests")
     private boolean isBodyValid() {
         boolean hasBody = body != null && !body.isNull() && !body.isMissingNode();
-        return !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
+        return method == null
+                || !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
                 || hasBody;
     }
 }

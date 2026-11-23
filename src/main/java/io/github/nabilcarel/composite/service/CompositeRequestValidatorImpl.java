@@ -30,6 +30,16 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     public List<String> validateRequest(CompositeRequest request) {
         List<String> errors = new ArrayList<>();
 
+        if (request.getSubRequests() == null || request.getSubRequests().isEmpty()) {
+            errors.add("At least one sub-request is required");
+            return errors;
+        }
+
+        if (request.getSubRequests().stream().anyMatch(Objects::isNull)) {
+            errors.add("Sub-requests must not be null");
+            return errors;
+        }
+
         if (request.getSubRequests().size() > properties.getMaxSubRequestsPerComposite()) {
             errors.add("Too many sub-requests: " + request.getSubRequests().size() +
                     " exceeds the maximum of " + properties.getMaxSubRequestsPerComposite());
@@ -55,6 +65,22 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             }
 
             log.error("Invalid request {}", errors);
+
+            // Later checks assume the required fields are present
+            return errors;
+        }
+
+        List<String> headerErrors = new ArrayList<>();
+        for (SubRequestDto subRequest : request.getSubRequests()) {
+            if (subRequest.getHeaders() != null
+                    && subRequest.getHeaders().values().stream().anyMatch(Objects::isNull)) {
+                headerErrors.add("[" + subRequest.getReferenceId() + "] Header values must not be null");
+            }
+        }
+
+        if (!headerErrors.isEmpty()) {
+            errors.addAll(headerErrors);
+            return errors;
         }
 
         // Validate unique reference IDs

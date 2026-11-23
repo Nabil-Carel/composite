@@ -51,11 +51,10 @@
  *   <tr><td>{@code annotation}</td><td>{@code @CompositeEndpoint} annotation</td></tr>
  *   <tr><td>{@code autoconfigure}</td><td>Spring Boot auto-configuration and health indicator</td></tr>
  *   <tr><td>{@code config}</td><td>Configuration properties and endpoint registry</td></tr>
- *   <tr><td>{@code config.filter}</td><td>Servlet filter that drives the execution pipeline</td></tr>
  *   <tr><td>{@code controller}</td><td>Built-in composite REST controller</td></tr>
  *   <tr><td>{@code exception}</td><td>Library-specific exception hierarchy</td></tr>
  *   <tr><td>{@code model}</td><td>Runtime coordination types (tracker, coordinator)</td></tr>
- *   <tr><td>{@code model.request}</td><td>Request DTOs and servlet request wrapper</td></tr>
+ *   <tr><td>{@code model.request}</td><td>Request DTOs and batch context</td></tr>
  *   <tr><td>{@code model.response}</td><td>Response DTOs and servlet response wrapper</td></tr>
  *   <tr><td>{@code service}</td><td>Service interfaces and implementations</td></tr>
  *   <tr><td>{@code util}</td><td>Shared regex pattern constants</td></tr>

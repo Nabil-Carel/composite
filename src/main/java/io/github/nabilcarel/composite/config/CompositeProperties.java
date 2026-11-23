@@ -67,15 +67,6 @@ public class CompositeProperties {
     private int maxSubRequestsPerComposite = 25;
 
     /**
-     * Ant-style URL pattern used to register the
-     * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter}.
-     *
-     * <p>Must match the URL of the composite execution endpoint. Defaults to
-     * {@code /api/composite/execute}.
-     */
-    private String filterPattern = "/api/composite/execute";
-
-    /**
      * Configuration for composite-request tracking headers injected into each sub-request.
      *
      * @see HeaderInjection
