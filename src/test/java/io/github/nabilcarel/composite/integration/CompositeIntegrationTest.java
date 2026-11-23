@@ -24,7 +24,8 @@ import static org.assertj.core.api.Assertions.*;
 @TestPropertySource(properties = {
     "composite.base-path=/api/composite",
     "composite.controller.enabled=true",
-    "composite.header-injection.enabled=true"
+    "composite.header-injection.enabled=true",
+    "composite.security.client-allowed-headers=X-Custom-Header"
 })
 class CompositeIntegrationTest {
 

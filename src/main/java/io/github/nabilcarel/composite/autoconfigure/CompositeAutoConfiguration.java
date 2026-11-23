@@ -31,6 +31,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.core.Ordered;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.DefaultUriBuilderFactory;
 import reactor.netty.http.client.HttpClient;
 
 /**
@@ -182,8 +183,12 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
             httpClient = configureHttpsClient(httpClient, loopbackProperties);
         }
 
+        // Sub-request URLs are already encoded by SubRequestTarget and must not be encoded again.
+        DefaultUriBuilderFactory uriBuilderFactory = new DefaultUriBuilderFactory(baseUrl);
+        uriBuilderFactory.setEncodingMode(DefaultUriBuilderFactory.EncodingMode.NONE);
+
         return WebClient.builder()
-                .baseUrl(baseUrl)
+                .uriBuilderFactory(uriBuilderFactory)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
     }

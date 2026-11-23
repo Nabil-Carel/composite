@@ -61,13 +61,11 @@ public class SubRequestDto {
     /**
      * The target URL of this sub-request.
      *
-     * <p>May be a relative path (e.g. {@code /api/users/42}) or an absolute URI. Placeholder
+     * <p>Must be an application-relative path (e.g. {@code /api/users/42}). Placeholder
      * expressions of the form {@code ${referenceId.property}} are resolved at runtime against
      * completed sub-responses before the request is dispatched.
      */
     @NotBlank(message = "URL is required")
-    // @Pattern(regexp = "^(http|https)://.*|^/.*",
-    // message = "URL must be absolute or start with /")
     private String url;
 
     /**

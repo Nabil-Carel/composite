@@ -123,11 +123,13 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             return Mono.empty();
         }
 
-        WebClient.RequestBodySpec requestBodySpec = webClient.method(HttpMethod.valueOf(subRequest.getMethod()))
+        WebClient.RequestBodySpec requestBodySpec = webClient.method(HttpMethod.valueOf(subRequest.getMethod().toUpperCase()))
                 .uri(resolvedUrl)
                 .headers(httpHeaders -> {
                     authForwardingService.forwardAuthentication(servletRequest, httpHeaders);
-                    subRequest.getHeaders().forEach(httpHeaders::add);
+                    if (subRequest.getResolvedHeaders() != null) {
+                        subRequest.getResolvedHeaders().forEach(httpHeaders::set);
+                    }
 
                     if(properties.getHeaderInjection().isEnabled()){
                         httpHeaders.add(properties.getHeaderInjection().getRequestHeader(), "true");

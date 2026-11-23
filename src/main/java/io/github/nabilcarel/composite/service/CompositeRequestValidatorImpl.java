@@ -6,10 +6,10 @@ import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
+import io.github.nabilcarel.composite.util.SubRequestHeaderPolicy;
+import io.github.nabilcarel.composite.util.SubRequestTarget;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -268,13 +268,34 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         }
 
         // Validate URL format
-        String urlError = validateResolvedUrlFormat(request.getUrl());
+        String urlError = validateUrlTemplate(request.getUrl());
 
         if (urlError != null) {
             errors.add("[" + refId + "] " + urlError);
         }
 
+        // Validate client-supplied headers
+        if (request.getHeaders() != null) {
+            for (String headerName : request.getHeaders().keySet()) {
+                if (!SubRequestHeaderPolicy.isClientHeaderAllowed(headerName, properties)) {
+                    String error = "[" + refId + "] Header not allowed on a sub-request: " + headerName;
+                    errors.add(error);
+                    log.error(error);
+                }
+            }
+        }
+
         return errors;
+    }
+
+    private String validateUrlTemplate(String url) {
+        try {
+            SubRequestTarget.parse(url);
+            return null;
+        } catch (IllegalArgumentException e) {
+            log.error("Invalid URL format: {}", url);
+            return "Invalid URL format: " + url;
+        }
     }
 
     private List<String> validateRequestBody(SubRequestDto request) {
@@ -318,29 +339,12 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
     }
 
     public String validateResolvedUrlFormat(String url) {
-        String error = null;
-        String escapedUrl = escapeUriTemplate(url);
-
-        try {
-            URI uri = new URI(escapedUrl);
-
-            if (!uri.isAbsolute() && !url.startsWith("/")) {
-                error = "URL must be absolute or start with /: " + url;
-                log.error(error);
-            }
-        }
-        catch (URISyntaxException e) {
-            error = "Invalid URL format: " + url;
-            log.error(error);
+        if (SubRequestTarget.routablePath(url).isPresent()) {
+            return null;
         }
 
+        String error = "Invalid URL format: " + url;
+        log.error(error);
         return error;
-    }
-
-    private String escapeUriTemplate(String url) {
-        return url.replace("${", "%24%7B")
-                  .replace("}", "%7D")
-                  .replace("[", "%5B")
-                  .replace("]", "%5D");
     }
 }

@@ -334,20 +334,16 @@ class CompositeRequestValidatorImplTest {
         String invalidUrl = "not-a-valid-url";
         String error = validatorService.validateResolvedUrlFormat(invalidUrl);
         
-        assertThat(error).isNotNull()
-            .satisfiesAnyOf(
-                e -> assertThat(e).contains("Invalid URL format"),
-                e -> assertThat(e).contains("URL must be absolute")
-            );
+        assertThat(error).isNotNull().contains("Invalid URL format");
     }
 
     @Test
     @Tag("skipEndpointMocks")
-    void testValidateResolvedUrlFormat_withValidAbsoluteUrl() {
-        String validUrl = "http://example.com/api/test";
-        String error = validatorService.validateResolvedUrlFormat(validUrl);
-        
-        assertThat(error).isNull();
+    void testValidateResolvedUrlFormat_withAbsoluteUrl_isRejected() {
+        String absoluteUrl = "http://example.com/api/test";
+        String error = validatorService.validateResolvedUrlFormat(absoluteUrl);
+
+        assertThat(error).isNotNull().contains("Invalid URL format");
     }
 
     @Test

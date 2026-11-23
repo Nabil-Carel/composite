@@ -83,15 +83,6 @@ public class CompositeProperties {
     private HeaderInjection headerInjection = new HeaderInjection();
 
     /**
-     * Maximum number of placeholder-resolution iterations permitted per value.
-     *
-     * <p>Limits the depth to which nested {@code ${...}} expressions (e.g.
-     * {@code ${${other.key}.name}}) are expanded. Guards against pathological inputs that
-     * would otherwise cause infinite resolution loops. Defaults to {@code 10}.
-     */
-    private int maxResolutionIterations = 10;
-
-    /**
      * Maximum allowed depth of the sub-request dependency graph.
      *
      * <p>A depth of {@code n} means that a chain of {@code n} sequentially-dependent
@@ -185,5 +176,21 @@ public class CompositeProperties {
          * {@code X-API-Key}.
          */
         private List<String> forwardedHeaders = new ArrayList<>();
+
+        /**
+         * Names of headers a client may set on an individual sub-request.
+         *
+         * <p>Any other header is rejected during validation. Credential, proxy, identity,
+         * hop-by-hop and composite tracking headers are always refused, even if listed.
+         */
+        private List<String> clientAllowedHeaders = new ArrayList<>(List.of(
+                "Accept", "Accept-Language", "If-Match", "If-None-Match",
+                "If-Modified-Since", "If-Unmodified-Since"));
+
+        /**
+         * Additional header names clients may never set on a sub-request, such as an
+         * application-specific identity header like {@code X-User-Id}.
+         */
+        private List<String> blockedHeaders = new ArrayList<>();
     }
 }

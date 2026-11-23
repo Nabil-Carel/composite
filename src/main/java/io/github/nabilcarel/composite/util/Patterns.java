@@ -15,12 +15,10 @@ import lombok.experimental.UtilityClass;
 public class Patterns {
 
     /**
-     * Matches any {@code ${...}} placeholder expression, including those with nested
-     * {@code ${}} sequences.
+     * Matches a {@code ${...}} placeholder expression.
      *
      * <p>Capture group 1 contains the expression inside the braces.
-     * Example matches: {@code ${user.id}}, {@code ${items[0].name}},
-     * {@code ${${ref}.field}}.
+     * Example matches: {@code ${user.id}}, {@code ${items[0].name}}.
      */
     public static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
 
@@ -31,17 +29,6 @@ public class Patterns {
      * Example match: {@code [0]} in the path {@code [0].name}.
      */
     public static final Pattern INDEX_PATTERN = Pattern.compile("\\[(\\d+)\\]");
-
-    /**
-     * Matches the <em>innermost</em> (non-nested) {@code ${...}} placeholder — i.e. one
-     * whose content contains no {@code $} or {@code {}} characters.
-     *
-     * <p>Used during single-pass resolution to substitute the innermost placeholders first,
-     * enabling nested expressions to be unwound iteratively.
-     *
-     * <p>Capture group 1 contains the innermost expression.
-     */
-    public static final Pattern INNERMOST_PATTERN = Pattern.compile("\\$\\{([^${}]+)\\}");
 
     /**
      * Splits a placeholder expression at the first {@code .} or {@code [} separator to

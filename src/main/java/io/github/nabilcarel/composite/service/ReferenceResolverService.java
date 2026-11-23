@@ -18,9 +18,8 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
  *   <li><strong>Bracket key notation</strong>: {@code ${config['db.host']}} — accesses a
  *       {@link java.util.Map Map} entry whose key contains characters that would otherwise
  *       be treated as path separators.</li>
- *   <li><strong>Nested placeholders</strong>: {@code ${${ref}.id}} — resolved iteratively
- *       up to
- *       up to {@code composite.max-resolution-iterations} passes.</li>
+ *   <li><strong>Nested placeholders are rejected</strong>: {@code ${${ref}.id}} is invalid
+ *       because values are substituted exactly once.</li>
  * </ul>
  *
  * <p>When a placeholder refers to a value that is the sole content of a body field, the

@@ -5,14 +5,14 @@ import static io.github.nabilcarel.composite.util.Patterns.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
-import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
-import io.github.nabilcarel.composite.exception.UnresolvedReferenceException;
 import io.github.nabilcarel.composite.model.NodeReference;
 import io.github.nabilcarel.composite.model.PlaceholderResolution;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.SubResponse;
+import io.github.nabilcarel.composite.util.ReferenceTemplate;
+import io.github.nabilcarel.composite.util.SubRequestTarget;
 import java.lang.reflect.Array;
 import java.util.Collection;
 import java.util.List;
@@ -20,12 +20,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
-import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanWrapperImpl;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * Default {@link ReferenceResolverService} implementation that resolves
@@ -46,11 +44,11 @@ import org.springframework.web.util.UriComponentsBuilder;
  *       {@link java.lang.reflect.Array#get(Object, int) Array.get}.</li>
  * </ol>
  *
- * <p>Multi-pass resolution is performed iteratively up to
- * {@code composite.max-resolution-iterations} times to handle nested
- * placeholders. Resolution terminates early when a pass produces no changes.
+ * <p>Client templates are compiled once and substituted once. Inserted values are never
+ * scanned again, so stored response data cannot act as a placeholder. URL values are
+ * encoded for their position by {@link SubRequestTarget}.
  *
- * <p>Header values are sanitised after resolution to strip CRLF characters, preventing
+ * <p>Header values are sanitised after resolution to strip control characters, preventing
  * HTTP header injection.
  *
  * @see ReferenceResolverService
@@ -64,15 +62,10 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     private final ConcurrentMap<String, ResponseTracker> responseStore;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper mapper;
-    private final CompositeProperties properties;
-
-    private int getMaxResolutionIterations() {
-        return properties.getMaxResolutionIterations();
-    }
 
     public String resolveUrl(SubRequest subRequest, String batchId) {
-        String url = resolveNestedPlaceholders(subRequest.getUrl(), batchId);
-        url = UriComponentsBuilder.fromUriString(url).build().encode().toUriString();
+        String url = SubRequestTarget.parse(subRequest.getUrl())
+                .render(expression -> resolveToText(expression, batchId));
         subRequest.setResolvedUrl(url);
         return url;
     }
@@ -85,20 +78,21 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         subRequest.setResolvedHeaders(subRequest.getHeaders().entrySet().stream().collect(
                 java.util.stream.Collectors.toMap(
                         java.util.Map.Entry::getKey,
-                        entry -> sanitizeHeaderValue(resolveNestedPlaceholders(entry.getValue(), batchId))
+                        entry -> sanitizeHeaderValue(ReferenceTemplate.parse(entry.getValue())
+                                .render(expression -> resolveToText(expression, batchId)))
                 )
         ));
     }
 
     /**
-     * Sanitizes header values to prevent CRLF injection attacks.
-     * Strips carriage return and line feed characters from resolved values.
+     * Sanitizes header values to prevent header injection attacks.
+     * Strips control characters, including carriage return and line feed.
      */
     private String sanitizeHeaderValue(String value) {
         if (value == null) {
             return null;
         }
-        return value.replaceAll("[\r\n]", "");
+        return value.replaceAll("\\p{Cntrl}", "");
     }
 
     public void resolveBody(SubRequest subRequest, String batchId) {
@@ -114,99 +108,44 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
         for (NodeReference nodeRef : subRequest.getNodeReferences()) {
             String text = nodeRef.getValue().asText();
-            Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
+            ReferenceTemplate template = ReferenceTemplate.parse(text);
 
-            if(!matcher.find()) {
+            if (!template.hasReferences()) {
                 continue; // Nothing to replace
             }
 
-            matcher.reset();
-
-            // Entire value matches the placeholder pattern
-            if(matcher.matches()) {
-                String resolvedText = resolveNestedPlaceholders(text, batchId);
-
-                // Check if fully resolved (no more ${} patterns)
-                if (!PLACEHOLDER_PATTERN.matcher(resolvedText).find()) {
-                    // Fully resolved - preserve original type
-                    Object resolvedObject = parseResolvedValue(resolvedText, resolvedText, batchId);
-                    JsonNode node = mapper.valueToTree(resolvedObject);
-                    nodeRef.overrideValue(node);
-                } else {
-                    // Still has unresolved placeholders
-                    throw new ReferenceResolutionException("Could not fully resolve placeholder", text);
-                }
-            }
-            else {
-                // Multiple placeholders or mixed content: "Hello ${user.name}, order #${order.id}!"
-                String resolvedText = resolveNestedPlaceholders(text, batchId);
-
-                // Check if all placeholders were resolved
-                if (PLACEHOLDER_PATTERN.matcher(resolvedText).find()) {
-                    throw new IllegalArgumentException("Could not fully resolve all placeholders in: " + text);
-                }
-
-                nodeRef.overrideValue(new TextNode(resolvedText));
+            if (template.isSingleReference()) {
+                // Entire value is one reference, so it keeps its original type
+                nodeRef.overrideValue(toJsonValue(template.tokens().get(0).text(), batchId));
+            } else {
+                // Mixed content: "Hello ${user.name}, order #${order.id}!"
+                nodeRef.overrideValue(new TextNode(
+                        template.render(expression -> resolveToText(expression, batchId))));
             }
         }
     }
 
-    /**
-     * Resolves nested placeholders iteratively until no more ${} patterns exist
-     */
-    private String resolveNestedPlaceholders(String input, String batchId) {
-        String result = input;
-        String previous;
-        int iteration = 0;
-
-        do {
-            previous = result;
-            result = resolveSinglePass(result, batchId);
-            iteration++;
-        } while (!result.equals(previous) && iteration < getMaxResolutionIterations());
-
-        if (iteration >= getMaxResolutionIterations()) {
-            throw new IllegalArgumentException("Maximum resolution iterations exceeded. Possible circular reference in: " + input);
-        }
-
-        return result;
+    private String resolveToText(String expression, String batchId) {
+        PlaceholderResolution placeholder = parseExpression(expression, batchId);
+        return getResolvedValue(placeholder.root(), placeholder.objectId(), placeholder.propertyPath());
     }
 
-    /**
-     * Single pass resolution of all ${} placeholders in the input
-     */
-    private String resolveSinglePass(String input, String batchId) {
-        // Find innermost placeholders first (those without nested ${})
-        Matcher matcher = INNERMOST_PATTERN.matcher(input);
-        StringBuffer result = new StringBuffer();
+    private JsonNode toJsonValue(String expression, String batchId) {
+        PlaceholderResolution placeholder = parseExpression(expression, batchId);
+        Object value = getResolvedObject(placeholder.root(), placeholder.objectId(), placeholder.propertyPath());
 
-        while (matcher.find()) {
-            try {
-                PlaceholderResolution placeholder = resolvePlaceholder(matcher, batchId);
-                String replacement = getResolvedValue(placeholder.root(), placeholder.objectId(),
-                        placeholder.propertyPath());
-                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
-            } catch (UnresolvedReferenceException e) {
-                // Leave unresolved placeholders as-is for next iteration
-                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
-            }
+        if (value == null) {
+            throw new ReferenceResolutionException(
+                    "Resolved value is null for path '" + placeholder.propertyPath() + "' on object '"
+                            + placeholder.objectId() + "'",
+                    placeholder.objectId());
         }
 
-        matcher.appendTail(result);
-        return result.toString();
-    }
-
-    /**
-     * For single placeholder that occupies entire value, try to preserve original type
-     */
-    private Object parseResolvedValue(String resolvedText, String originalExpression, String batchId) {
         try {
-            PlaceholderResolution placeholder = parseExpression(originalExpression, batchId);
-            return getResolvedObject(placeholder.root(), placeholder.objectId(),
-                    placeholder.propertyPath());
-        } catch (Exception e) {
-            // Fallback to string value
-            return resolvedText;
+            return mapper.valueToTree(value);
+        } catch (IllegalArgumentException e) {
+            // Types the composite mapper cannot serialize fall back to their text form
+            return new TextNode(value.toString());
         }
     }
 
@@ -252,11 +191,6 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         }
     }
 
-    private PlaceholderResolution resolvePlaceholder(@NonNull Matcher matcher, @NonNull String batchId) {
-        String expression = matcher.group(1);
-        return parseExpression(expression, batchId);
-    }
-
     /**
      * Parses expressions to handle both dot and bracket notation:
      * - user.name -> objectId="user", propertyPath="name"
@@ -265,13 +199,6 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
      * - config['database.host'] -> objectId="config", propertyPath="['database.host']"
      */
     private PlaceholderResolution parseExpression(String expression, String batchId) {
-        // If expression still contains ${}, it's not fully resolved yet
-        if (PLACEHOLDER_PATTERN.matcher(expression).find()) {
-            throw new UnresolvedReferenceException(
-                    "Expression contains unresolved placeholders: " + expression
-            );
-        }
-
         // Find the root object name (everything before first . or [)
         String objectId;
         String propertyPath;

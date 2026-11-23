@@ -1,8 +1,7 @@
 package io.github.nabilcarel.composite.config;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
-import java.net.URI;
-import java.net.URISyntaxException;
+import io.github.nabilcarel.composite.util.SubRequestTarget;
 import java.util.*;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
@@ -10,32 +9,30 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
+import org.springframework.http.server.PathContainer;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
-import org.springframework.util.AntPathMatcher;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.mvc.condition.PathPatternsRequestCondition;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Discovers and maintains an allowlist of Spring MVC endpoints that are eligible for
+ * Discovers and maintains an allowlist of Spring MVC handlers that are eligible for
  * composite execution.
  *
  * <p>At application startup (on {@link org.springframework.boot.context.event.ApplicationReadyEvent
- * ApplicationReadyEvent}), the registry scans all handler methods registered in the
- * {@link RequestMappingHandlerMapping} and retains only those annotated with
+ * ApplicationReadyEvent}), the registry reads every handler method registered in the
+ * {@link RequestMappingHandlerMapping}, including those without
  * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint &#64;CompositeEndpoint}.
  *
- * <p>During request validation and execution, every sub-request URL is matched against the
- * registered patterns using Spring's {@link AntPathMatcher}. A sub-request that targets an
- * unregistered URL is rejected immediately, preventing Server-Side Request Forgery (SSRF)
- * attacks. The {@link EndpointInfo} stored for each registered endpoint carries the
- * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint#value() response class}
- * needed to deserialize the loopback response.
- *
- * <p>For efficiency, patterns are indexed by their first path segment so that the matching
- * loop only compares candidates with a matching prefix.
+ * <p>A sub-request path is allowed only when the handler Spring would route it to is
+ * annotated. Knowing the unannotated routes is what makes this possible: {@code /users/me}
+ * matches an annotated {@code /users/{id}}, but Spring prefers an unannotated
+ * {@code /users/me} handler, so that request is refused. If several equally specific
+ * mappings match, all of them must be annotated.
  *
  * @see io.github.nabilcarel.composite.annotation.CompositeEndpoint
  * @see io.github.nabilcarel.composite.service.CompositeRequestValidator
@@ -45,13 +42,14 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 @Slf4j
 @RequiredArgsConstructor
 public class EndpointRegistry implements ApplicationListener<ApplicationReadyEvent> {
+    private static final List<String> COMPOSITE_METHODS = List.of("GET", "POST", "PUT", "PATCH", "DELETE");
+
     private final ApplicationContext applicationContext;
     @Qualifier("requestMappingHandlerMapping")
     private final RequestMappingHandlerMapping handlerMapping;
 
-    private final AntPathMatcher pathMatcher = new AntPathMatcher();
-    private final Map<EndpointPattern, EndpointInfo> availableEndpoints = new HashMap<>();
-    private final Map<String, Set<EndpointPattern>> patternsByFirstSegment = new HashMap<>();
+    private volatile Map<String, List<Route>> routesByMethod = Map.of();
+    private volatile Set<EndpointInfo> availableEndpoints = Set.of();
 
     @Override
     public void onApplicationEvent(@NonNull ApplicationReadyEvent event) {
@@ -59,105 +57,99 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     }
 
     private void discoverEndpoints() {
-        Map<RequestMappingInfo, HandlerMethod> handlerMethods = handlerMapping.getHandlerMethods();
+        Map<String, List<Route>> routes = new HashMap<>();
+        Set<EndpointInfo> endpoints = new LinkedHashSet<>();
 
-        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMethods.entrySet()) {
-            HandlerMethod handlerMethod = entry.getValue();
-            CompositeEndpoint annotation = handlerMethod.getMethodAnnotation(CompositeEndpoint.class);
+        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMapping.getHandlerMethods().entrySet()) {
+            RequestMappingInfo mapping = entry.getKey();
+            CompositeEndpoint annotation = entry.getValue().getMethodAnnotation(CompositeEndpoint.class);
+            PathPatternsRequestCondition pathCondition = mapping.getPathPatternsCondition();
 
-            if (annotation != null) {
-                RequestMappingInfo mapping = entry.getKey();
-                if (mapping.getPathPatternsCondition() != null) {
-                    String pattern = mapping.getPathPatternsCondition().getPatterns().iterator().next()
-                            .getPatternString();
-                    Set<RequestMethod> methods = mapping.getMethodsCondition().getMethods();
+            if (pathCondition == null) {
+                if (annotation != null) {
+                    log.warn("Composite endpoint {} ignored: only PathPattern matching is supported",
+                            entry.getValue());
+                }
+                continue;
+            }
 
-                    for (RequestMethod method : methods) {
-                        EndpointPattern endpointPattern = new EndpointPattern(method.name(), pattern);
-                        EndpointInfo info = EndpointInfo.builder()
-                                .pattern(pattern)
-                                .method(method.name())
+            for (PathPattern pattern : pathCondition.getPatterns()) {
+                for (String method : methodsOf(mapping)) {
+                    EndpointInfo info = null;
+
+                    if (annotation != null) {
+                        info = EndpointInfo.builder()
+                                .pattern(pattern.getPatternString())
+                                .method(method)
                                 .returnClass(annotation.value())
                                 .build();
-
-                        availableEndpoints.put(endpointPattern, info);
-                        String firstSegment = getFirstSegment(pattern);
-                        patternsByFirstSegment.computeIfAbsent(firstSegment, k -> new HashSet<>())
-                                .add(endpointPattern);
-
-                        log.info("Registered composite endpoint: {}", endpointPattern);
+                        endpoints.add(info);
+                        log.info("Registered composite endpoint: {} {}", method, pattern.getPatternString());
                     }
+
+                    routes.computeIfAbsent(method, key -> new ArrayList<>()).add(new Route(pattern, info));
                 }
             }
         }
+
+        routesByMethod = Map.copyOf(routes);
+        availableEndpoints = Collections.unmodifiableSet(endpoints);
     }
 
-    public Optional<EndpointInfo> getEndpointInformations(String method, String url) {
-        String normalizedUrl = normalizePath(url);
-        String firstSegment = getFirstSegment(normalizedUrl);
-        if (!patternsByFirstSegment.containsKey(firstSegment)) {
-            return Optional.empty();
+    private List<String> methodsOf(RequestMappingInfo mapping) {
+        Set<RequestMethod> declared = mapping.getMethodsCondition().getMethods();
+        if (declared.isEmpty()) {
+            return COMPOSITE_METHODS;
         }
-
-        return findMatchingEndpoint(method, normalizedUrl);
-    }
-
-    private String normalizePath(String url) {
-        try {
-            URI uri = new URI(url).normalize();
-            String path = uri.getPath();
-            String query = uri.getRawQuery();
-            return query != null ? path + "?" + query : path;
-        } catch (URISyntaxException e) {
-            return url;
-        }
-    }
-
-    private Optional<EndpointInfo> findMatchingEndpoint(String method, String path) {
-        String firstSegment = getFirstSegment(path);
-        Set<EndpointPattern> potentialPatterns =
-                patternsByFirstSegment.getOrDefault(firstSegment, Set.of());
-
-        return potentialPatterns.stream()
-                .filter(p -> p.getMethod().equalsIgnoreCase(method))
-                .filter(p -> pathMatcher.match(p.getPattern(), path))
-                .map(availableEndpoints::get)
-                .findFirst();
-    }
-
-    private String getFirstSegment(String path) {
-        String normalizedPath = path.startsWith("/") ? path.substring(1) : path;
-        int nextSlash = normalizedPath.indexOf('/');
-        return nextSlash > 0 ?
-                normalizedPath.substring(0, nextSlash) :
-                normalizedPath;
-    }
-
-    public Set<EndpointInfo> getAvailableEndpoints() {
-        return new HashSet<>(availableEndpoints.values());
+        return declared.stream().map(RequestMethod::name).filter(COMPOSITE_METHODS::contains).toList();
     }
 
     /**
-     * Composite key used to index registered endpoints by HTTP method and Ant-style URL
-     * pattern.
+     * Finds the annotated endpoint a sub-request would be routed to.
      *
-     * @since 0.0.1
+     * @param method the HTTP method, in any case
+     * @param url a URL template or rendered URL; the query string is ignored
+     * @return the endpoint, or empty if the URL is unsafe or routes to an unannotated handler
      */
-    @Getter
-    @Setter
-    @AllArgsConstructor
-    public static class EndpointPattern {
-
-        /** The HTTP method (e.g. {@code GET}, {@code POST}). */
-        private String method;
-
-        /** The Ant-style URL pattern (e.g. {@code /api/users/{id}}). */
-        private String pattern;
-
-        @Override
-        public String toString() {
-            return method + " " + pattern;
+    public Optional<EndpointInfo> getEndpointInformations(String method, String url) {
+        if (method == null) {
+            return Optional.empty();
         }
+
+        Optional<String> path = SubRequestTarget.routablePath(url);
+        if (path.isEmpty()) {
+            return Optional.empty();
+        }
+
+        PathContainer container = PathContainer.parsePath(path.get());
+        List<Route> matches = routesByMethod.getOrDefault(method.toUpperCase(Locale.ROOT), List.of()).stream()
+                .filter(route -> route.pattern().matches(container))
+                .toList();
+
+        if (matches.isEmpty()) {
+            return Optional.empty();
+        }
+
+        PathPattern mostSpecific = matches.stream()
+                .map(Route::pattern)
+                .min(PathPattern.SPECIFICITY_COMPARATOR)
+                .orElseThrow();
+        List<Route> selected = matches.stream()
+                .filter(route -> PathPattern.SPECIFICITY_COMPARATOR.compare(route.pattern(), mostSpecific) == 0)
+                .toList();
+
+        if (selected.stream().anyMatch(route -> route.endpoint() == null)) {
+            return Optional.empty();
+        }
+        return Optional.of(selected.get(0).endpoint());
+    }
+
+    public Set<EndpointInfo> getAvailableEndpoints() {
+        return new HashSet<>(availableEndpoints);
+    }
+
+    /** A mapped path and its allowlist entry, which is {@code null} for unannotated handlers. */
+    private record Route(PathPattern pattern, EndpointInfo endpoint) {
     }
 
     /**
@@ -170,7 +162,7 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     @Builder
     public static class EndpointInfo {
 
-        /** The Ant-style URL pattern registered for this endpoint. */
+        /** The URL pattern registered for this endpoint. */
         private String pattern;
 
         /** The HTTP method of this endpoint (e.g. {@code GET}). */
