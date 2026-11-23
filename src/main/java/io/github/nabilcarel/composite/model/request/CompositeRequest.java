@@ -58,6 +58,15 @@ public class CompositeRequest {
     private List<@Valid SubRequestDto> subRequests;
 
     /**
+     * When {@code true}, the first non-2xx sub-response stops the rest of the batch.
+     *
+     * <p>Sub-requests that never started receive {@code 424}. In-flight calls are cancelled
+     * and receive {@code 503}, because their handlers may have already run. This is not a
+     * transaction: completed work is not rolled back. Defaults to {@code false}.
+     */
+    private boolean stopOnFailure;
+
+    /**
      * Rejects unknown fields regardless of the host application's Jackson settings, so a
      * misspelled or unsupported option cannot be silently ignored.
      */

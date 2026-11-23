@@ -319,7 +319,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         responseStore.put(requestId, tracker);
         CompositeBatchContext batchContext = new CompositeBatchContextImpl(
                 tracker, new SubRequestCoordinatorImpl(dependencyMap), requestMap, this, requestId, context,
-                properties.getMaxConcurrentSubRequests());
+                properties.getMaxConcurrentSubRequests(), compositeRequest.isStopOnFailure());
 
         Runnable cleanup = () -> {
             batchContext.cancel();

@@ -14,6 +14,22 @@ import static org.assertj.core.api.Assertions.*;
 
 class ResponseTrackerImplTest {
 
+    @org.junit.jupiter.api.Test
+    void addResponse_keepsTheFirstResultAndCountsItOnce() {
+        ResponseTrackerImpl tracker = new ResponseTrackerImpl(2);
+        java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        tracker.setOnSubRequestResolved(id -> callbacks.incrementAndGet());
+        SubResponse first = SubResponse.builder().referenceId("a").httpStatus(200).build();
+        SubResponse late = SubResponse.builder().referenceId("a").httpStatus(503).build();
+
+        tracker.addResponse("a", first);
+        tracker.addResponse("a", late);
+
+        org.assertj.core.api.Assertions.assertThat(tracker.getSubResponseMap().get("a")).isSameAs(first);
+        org.assertj.core.api.Assertions.assertThat(tracker.getFuture()).isNotDone();
+        org.assertj.core.api.Assertions.assertThat(callbacks).hasValue(1);
+    }
+
     private ResponseTrackerImpl tracker;
 
     @BeforeEach
@@ -169,7 +185,7 @@ class ResponseTrackerImplTest {
     }
 
     @Test
-    void testAddResponse_overwritesPreviousResponse() {
+    void testAddResponse_keepsFirstResponse() {
         SubResponse response1 = SubResponse.builder()
             .referenceId("test1")
             .httpStatus(200)
@@ -182,11 +198,11 @@ class ResponseTrackerImplTest {
             .build();
 
         tracker.addResponse("test1", response1);
-        tracker.addResponse("test1", response2);  // Overwrite
+        tracker.addResponse("test1", response2);  // Ignored
 
         Map<String, SubResponse> responseMap = tracker.getSubResponseMap();
         assertThat(responseMap).hasSize(1)
-            .containsEntry("test1", response2);
+            .containsEntry("test1", response1);
     }
 
     @Test

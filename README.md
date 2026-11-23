@@ -227,6 +227,23 @@ If `composite.request-timeout` elapses, the response is `504`, in-flight calls a
 
 Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones.
 
+### 5. Stop the batch on the first failure
+```json
+{
+  "stopOnFailure": true,
+  "subRequests": [
+    { "method": "POST", "url": "/api/orders", "referenceId": "order", "body": { "sku": "A1" } },
+    { "method": "POST", "url": "/api/payments", "referenceId": "payment", "body": { "orderId": "${order.id}" } }
+  ]
+}
+```
+
+With `stopOnFailure`, the first non-2xx sub-response stops the rest of the batch:
+
+- Sub-requests that never started return `424`.
+- In-flight calls are cancelled and return `503`. Their handlers may have already run, so treat their outcome as unknown.
+- Completed work is **not** rolled back. Use one transactional endpoint when an operation must be all-or-nothing.
+
 ## How It Works
 
 The Composite Endpoint Library acts as an intelligent request orchestrator that coordinates multiple HTTP calls to your existing endpoints.

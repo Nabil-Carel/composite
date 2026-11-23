@@ -60,7 +60,8 @@ public interface ResponseTracker {
      *
      * <p>When the counter reaches zero this method completes {@link #getFuture()} and
      * invokes the registered {@link #setOnSubRequestResolved(Consumer) callback}. This
-     * method must be safe to call from multiple threads simultaneously.
+     * method must be safe to call from multiple threads simultaneously. If a result is already
+     * recorded for the sub-request, the first result is kept and the call has no effect.
      *
      * @param subRequestId the {@code referenceId} of the completed sub-request; must not
      *                     be {@code null}

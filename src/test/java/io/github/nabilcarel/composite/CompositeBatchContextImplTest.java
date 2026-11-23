@@ -254,6 +254,62 @@ class CompositeBatchContextImplTest {
     }
 
     @Test
+    void stopOnFailure_marksRunningAndQueuedWorkDifferently() {
+        SubRequest failed = createSubRequest("failed", "/api/failed", "GET");
+        SubRequest running = createSubRequest("running", "/api/running", "GET");
+        SubRequest queued = createSubRequest("queued", "/api/queued", "GET");
+        requestMap.put("failed", failed);
+        requestMap.put("running", running);
+        requestMap.put("queued", queued);
+        Map<String, SubResponse> responses = new HashMap<>();
+        responses.put("failed", SubResponse.builder().referenceId("failed").httpStatus(500).build());
+        ArgumentCaptor<Consumer<String>> callback = ArgumentCaptor.forClass(Consumer.class);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        when(tracker.getSubResponseMap()).thenReturn(responses);
+        when(coordinator.getInitialReadySubRequests()).thenReturn(List.of("running", "queued"));
+        when(coordinator.markInProgress(anyString())).thenReturn(true);
+        when(requestService.forwardSubrequest(running, BATCH_ID, requestContext))
+                .thenReturn(Mono.<Void>never().doOnCancel(() -> cancelled.set(true)));
+
+        CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 1, true);
+        verify(tracker).setOnSubRequestResolved(callback.capture());
+        batchContext.startInitialRequests();
+        callback.getValue().accept("failed");
+
+        ArgumentCaptor<SubResponse> runningResponse = ArgumentCaptor.forClass(SubResponse.class);
+        ArgumentCaptor<SubResponse> queuedResponse = ArgumentCaptor.forClass(SubResponse.class);
+        verify(tracker).addResponse(eq("running"), runningResponse.capture());
+        verify(tracker).addResponse(eq("queued"), queuedResponse.capture());
+        assertThat(cancelled).isTrue();
+        assertThat(runningResponse.getValue().getHttpStatus()).isEqualTo(503);
+        assertThat(runningResponse.getValue().getBody().toString()).contains("may have already");
+        assertThat(queuedResponse.getValue().getHttpStatus()).isEqualTo(424);
+        assertThat(queuedResponse.getValue().getBody().toString()).contains("Not executed");
+        verify(requestService, never()).forwardSubrequest(eq(queued), any(), any());
+        verify(tracker, never()).addResponse(eq("failed"), any());
+    }
+
+    @Test
+    void stopOnFailure_ignoresSuccessfulResponses() {
+        SubRequest reqB = createSubRequest("b", "/api/b", "GET");
+        requestMap.put("a", createSubRequest("a", "/api/a", "GET"));
+        requestMap.put("b", reqB);
+        ArgumentCaptor<Consumer<String>> callback = ArgumentCaptor.forClass(Consumer.class);
+        when(tracker.getSubResponseMap())
+                .thenReturn(Map.of("a", SubResponse.builder().referenceId("a").httpStatus(200).build()));
+        when(coordinator.markResolved("a")).thenReturn(List.of("b"));
+        when(coordinator.markInProgress("b")).thenReturn(true);
+        when(requestService.forwardSubrequest(reqB, BATCH_ID, requestContext)).thenReturn(Mono.empty());
+
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5, true);
+        verify(tracker).setOnSubRequestResolved(callback.capture());
+        callback.getValue().accept("a");
+
+        verify(requestService).forwardSubrequest(reqB, BATCH_ID, requestContext);
+    }
+
+    @Test
     void constructor_rejectsInvalidConcurrencyLimit() {
         assertThatThrownBy(() -> new CompositeBatchContextImpl(
                 tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 0))

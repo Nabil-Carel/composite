@@ -8,7 +8,9 @@ import io.github.nabilcarel.composite.model.response.SubResponse;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
 import org.springframework.http.HttpStatus;
@@ -48,7 +50,10 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     private final String batchId;
     private final SubRequestContext context;
     private final int maxConcurrentSubRequests;
+    private final boolean stopOnFailure;
     private final Queue<String> readyQueue = new ConcurrentLinkedQueue<>();
+    private final Set<String> started = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean stopped = new AtomicBoolean();
     private final AtomicInteger inFlight = new AtomicInteger();
     private final Disposable.Composite subscriptions = Disposables.composite();
 
@@ -61,6 +66,19 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             SubRequestContext context,
             int maxConcurrentSubRequests
     ) {
+        this(tracker, coordinator, requestMap, requestService, batchId, context, maxConcurrentSubRequests, false);
+    }
+
+    public CompositeBatchContextImpl(
+            ResponseTracker tracker,
+            SubRequestCoordinator coordinator,
+            Map<String, SubRequest> requestMap,
+            CompositeRequestService requestService,
+            String batchId,
+            SubRequestContext context,
+            int maxConcurrentSubRequests,
+            boolean stopOnFailure
+    ) {
         if (maxConcurrentSubRequests < 1) {
             throw new IllegalArgumentException("maxConcurrentSubRequests must be at least 1");
         }
@@ -72,12 +90,18 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
         this.batchId = batchId;
         this.context = context;
         this.maxConcurrentSubRequests = maxConcurrentSubRequests;
+        this.stopOnFailure = stopOnFailure;
 
         tracker.setOnSubRequestResolved(this::handleSubRequestResolved);
     }
 
     private void handleSubRequestResolved(String resolvedId) {
         if (subscriptions.isDisposed()) {
+            return;
+        }
+
+        if (stopOnFailure && isFailure(tracker.getSubResponseMap().get(resolvedId))) {
+            stopAfterFailure(resolvedId);
             return;
         }
 
@@ -93,6 +117,39 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
         }
 
         drainReadyQueue();
+    }
+
+    private static boolean isFailure(SubResponse response) {
+        return response != null && (response.getHttpStatus() < 200 || response.getHttpStatus() >= 300);
+    }
+
+    /**
+     * Cancels the rest of the batch and records why each remaining sub-request has no result.
+     * A dispatch records {@link #started} before checking for disposal, so a call that may
+     * have reached its handler is never reported as not executed.
+     */
+    private void stopAfterFailure(String failedId) {
+        if (!stopped.compareAndSet(false, true)) {
+            return;
+        }
+
+        subscriptions.dispose();
+        readyQueue.clear();
+
+        Map<String, SubResponse> responses = tracker.getSubResponseMap();
+        for (String id : requestMap.keySet()) {
+            if (!responses.containsKey(id)) {
+                tracker.addResponse(id, started.contains(id)
+                        ? stoppedResponse(id, HttpStatus.SERVICE_UNAVAILABLE,
+                                "Cancelled because '" + failedId + "' failed. The handler may have already run.")
+                        : stoppedResponse(id, HttpStatus.FAILED_DEPENDENCY,
+                                "Not executed because '" + failedId + "' failed."));
+            }
+        }
+    }
+
+    private static SubResponse stoppedResponse(String id, HttpStatus status, String message) {
+        return SubResponse.builder().referenceId(id).httpStatus(status.value()).body(message).build();
     }
 
     /**
@@ -121,6 +178,13 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     }
 
     private void dispatch(String id) {
+        started.add(id);
+
+        if (subscriptions.isDisposed()) {
+            inFlight.decrementAndGet();
+            return;
+        }
+
         Mono<Void> call;
 
         try {

@@ -46,7 +46,11 @@ public class ResponseTrackerImpl implements ResponseTracker {
   }
 
   public void addResponse(String subRequestId, SubResponse subResponse) {
-    subResponseMap.put(subRequestId, subResponse);
+    // A call can finish while it is being cancelled, so the first recorded result wins.
+    if (subResponseMap.putIfAbsent(subRequestId, subResponse) != null) {
+      return;
+    }
+
     int remaining = remainingResponses.decrementAndGet();
 
     // Notify callback (capture reference to avoid race)
