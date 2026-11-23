@@ -36,7 +36,8 @@ class ReferenceResolverServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        referenceResolverService = new ReferenceResolverServiceImpl(responseStore, mapper);
+        referenceResolverService = new ReferenceResolverServiceImpl(responseStore, mapper,
+            new io.github.nabilcarel.composite.config.CompositeProperties());
 
         subRequest = new SubRequest(SubRequestDto.builder().build());
         subRequest.setUrl("/api/${user['name']}");

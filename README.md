@@ -220,10 +220,14 @@ composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-Non
 composite.security.blocked-headers=X-User-Id
 composite.header-injection.enabled=true
 composite.loopback.max-response-size=256KB
+# Defaults to half of server.tomcat.threads.max
 composite.loopback.max-connections=100
+composite.max-resolved-size=1MB
 ```
 
 If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+
+`composite.loopback.max-connections` also limits running sub-request handlers across all batches. Above it, calls wait for a connection, or return `503` if timed-out handlers are still running. The limit is shared, so one client sending many slow batches can delay other batch users. Add per-client rate limiting in production.
 
 Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones.
 

@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class CompositeAutoConfigurationTest {
 
-    @Mock
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private Environment environment;
 
     private CompositeProperties properties;

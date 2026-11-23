@@ -3,6 +3,7 @@ package io.github.nabilcarel.composite.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
+import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.NodeReference;
 import io.github.nabilcarel.composite.model.ResponseTracker;
@@ -11,6 +12,9 @@ import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.util.ReferencePath;
 import io.github.nabilcarel.composite.util.ReferenceTemplate;
 import io.github.nabilcarel.composite.util.SubRequestTarget;
+import java.math.BigDecimal;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
@@ -43,10 +47,52 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     private final ConcurrentMap<String, ResponseTracker> responseStore;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper mapper;
+    private final CompositeProperties properties;
+
+    /** Tracks how much referenced data has been inserted into one part of a sub-request. */
+    private static final class ResolutionBudget {
+        private long remaining;
+
+        private ResolutionBudget(long limit) {
+            this.remaining = limit;
+        }
+
+        private void charge(long size, String expression) {
+            remaining -= size;
+            if (remaining < 0) {
+                throw new ReferenceResolutionException(
+                        "Referenced data exceeds composite.max-resolved-size", expression);
+            }
+        }
+
+        private void charge(JsonNode value, String expression) {
+            Deque<JsonNode> pending = new ArrayDeque<>();
+            pending.push(value);
+
+            while (!pending.isEmpty()) {
+                JsonNode node = pending.pop();
+                if (node.isObject()) {
+                    node.fields().forEachRemaining(field -> {
+                        charge(field.getKey().length(), expression);
+                        pending.push(field.getValue());
+                    });
+                } else if (node.isArray()) {
+                    node.forEach(pending::push);
+                } else {
+                    charge(node.isTextual() ? node.textValue().length() : node.asText().length(), expression);
+                }
+            }
+        }
+    }
+
+    private ResolutionBudget newBudget() {
+        return new ResolutionBudget(properties.getMaxResolvedSize().toBytes());
+    }
 
     public String resolveUrl(SubRequest subRequest, String batchId) {
+        ResolutionBudget budget = newBudget();
         String url = SubRequestTarget.parse(subRequest.getUrl())
-                .render(expression -> resolveToText(expression, batchId));
+                .render(expression -> resolveToText(expression, batchId, budget));
         subRequest.setResolvedUrl(url);
         return url;
     }
@@ -56,11 +102,12 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             return;
         }
 
+        ResolutionBudget budget = newBudget();
         subRequest.setResolvedHeaders(subRequest.getHeaders().entrySet().stream().collect(
                 java.util.stream.Collectors.toMap(
                         java.util.Map.Entry::getKey,
                         entry -> sanitizeHeaderValue(ReferenceTemplate.parse(entry.getValue())
-                                .render(expression -> resolveToText(expression, batchId)))
+                                .render(expression -> resolveToText(expression, batchId, budget)))
                 )
         ));
     }
@@ -87,6 +134,8 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             return;
         }
 
+        ResolutionBudget budget = newBudget();
+
         for (NodeReference nodeRef : subRequest.getNodeReferences()) {
             String text = nodeRef.getValue().asText();
             ReferenceTemplate template = ReferenceTemplate.parse(text);
@@ -97,34 +146,44 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
             if (template.isSingleReference()) {
                 // Entire value is one reference, so it keeps its original type
-                nodeRef.overrideValue(resolveToJson(template.tokens().get(0).text(), batchId));
+                String expression = template.tokens().get(0).text();
+                JsonNode value = resolveNonNull(expression, batchId);
+                budget.charge(value, expression);
+                nodeRef.overrideValue(value.deepCopy());
             } else {
                 // Mixed content: "Hello ${user.name}, order #${order.id}!"
                 nodeRef.overrideValue(new TextNode(
-                        template.render(expression -> resolveToText(expression, batchId))));
+                        template.render(expression -> resolveToText(expression, batchId, budget))));
             }
         }
     }
 
-    private JsonNode resolveToJson(String expression, String batchId) {
+    private JsonNode resolveNonNull(String expression, String batchId) {
         JsonNode value = resolve(expression, batchId);
         if (value.isNull()) {
             throw new ReferenceResolutionException("Resolved value is null for: " + expression, expression);
         }
-        return value.deepCopy();
+        return value;
     }
 
-    private String resolveToText(String expression, String batchId) {
-        JsonNode value = resolveToJson(expression, batchId);
+    private String resolveToText(String expression, String batchId, ResolutionBudget budget) {
+        JsonNode value = resolveNonNull(expression, batchId);
 
+        if (!value.isValueNode()) {
+            throw new ReferenceResolutionException(
+                    "Reference must be a string, number or boolean here: " + expression, expression);
+        }
+
+        // Charge plain decimals by their rendered length, which an exponent can make very large.
         if (value.isBigDecimal()) {
-            return value.decimalValue().toPlainString();
+            BigDecimal decimal = value.decimalValue();
+            budget.charge(Math.abs((long) decimal.scale()) + decimal.precision() + 2L, expression);
+            return decimal.toPlainString();
         }
-        if (value.isValueNode()) {
-            return value.asText();
-        }
-        throw new ReferenceResolutionException(
-                "Reference must be a string, number or boolean here: " + expression, expression);
+
+        String text = value.asText();
+        budget.charge(text.length(), expression);
+        return text;
     }
 
     private JsonNode resolve(String expression, String batchId) {

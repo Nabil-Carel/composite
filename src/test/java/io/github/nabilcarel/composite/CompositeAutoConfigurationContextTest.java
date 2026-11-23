@@ -52,6 +52,12 @@ class CompositeAutoConfigurationContextTest {
     }
 
     @Test
+    void connectionLimit_isLeftUnsetSoItCanFollowTheServerThreadPool() {
+        runner.run(context ->
+            assertThat(context.getBean(CompositeLoopbackProperties.class).getMaxConnections()).isNull());
+    }
+
+    @Test
     void healthIndicator_isRegisteredWithActuator() {
         runner.run(context -> assertThat(context).hasBean("compositeHealthIndicator"));
     }

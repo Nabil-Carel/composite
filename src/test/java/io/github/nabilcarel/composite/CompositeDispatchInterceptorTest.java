@@ -12,7 +12,7 @@ import org.springframework.web.method.HandlerMethod;
 
 class CompositeDispatchInterceptorTest {
 
-    private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor();
+    private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor(10);
     private final MockHttpServletRequest request = new MockHttpServletRequest();
     private final MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -55,6 +55,51 @@ class CompositeDispatchInterceptorTest {
 
         assertThat(interceptor.preHandle(request, response, new Object())).isFalse();
         assertThat(response.getStatus()).isEqualTo(403);
+    }
+
+    private static MockHttpServletRequest loopbackRequest() {
+        MockHttpServletRequest loopback = new MockHttpServletRequest();
+        loopback.addHeader(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
+        return loopback;
+    }
+
+    @Test
+    void handlerLimit_rejectsExcessAndRecoversAfterCompletion() throws Exception {
+        CompositeDispatchInterceptor limited = new CompositeDispatchInterceptor(1);
+        HandlerMethod handler = handler("annotated");
+        MockHttpServletRequest first = loopbackRequest();
+        MockHttpServletResponse rejected = new MockHttpServletResponse();
+
+        assertThat(limited.preHandle(first, new MockHttpServletResponse(), handler)).isTrue();
+        assertThat(limited.preHandle(loopbackRequest(), rejected, handler)).isFalse();
+        assertThat(rejected.getStatus()).isEqualTo(503);
+
+        limited.afterCompletion(first, new MockHttpServletResponse(), handler, null);
+        limited.afterCompletion(first, new MockHttpServletResponse(), handler, null);
+
+        assertThat(limited.preHandle(loopbackRequest(), new MockHttpServletResponse(), handler)).isTrue();
+        assertThat(limited.preHandle(loopbackRequest(), new MockHttpServletResponse(), handler)).isFalse();
+    }
+
+    @Test
+    void handlerLimit_isReleasedWhenAHandlerGoesAsync() throws Exception {
+        CompositeDispatchInterceptor limited = new CompositeDispatchInterceptor(1);
+        HandlerMethod handler = handler("annotated");
+        MockHttpServletRequest first = loopbackRequest();
+
+        limited.preHandle(first, new MockHttpServletResponse(), handler);
+        limited.afterConcurrentHandlingStarted(first, new MockHttpServletResponse(), handler);
+
+        assertThat(limited.preHandle(loopbackRequest(), new MockHttpServletResponse(), handler)).isTrue();
+    }
+
+    @Test
+    void handlerLimit_doesNotCountDirectRequests() throws Exception {
+        CompositeDispatchInterceptor limited = new CompositeDispatchInterceptor(1);
+        HandlerMethod handler = handler("plain");
+
+        assertThat(limited.preHandle(new MockHttpServletRequest(), new MockHttpServletResponse(), handler)).isTrue();
+        assertThat(limited.preHandle(new MockHttpServletRequest(), new MockHttpServletResponse(), handler)).isTrue();
     }
 
     @Test

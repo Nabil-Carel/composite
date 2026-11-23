@@ -84,12 +84,14 @@ public final class CompositeLoopbackProperties {
     private DataSize maxResponseSize = DataSize.ofKilobytes(256);
 
     /**
-     * Maximum number of loopback connections across all batches.
+     * Maximum number of loopback connections and running sub-request handlers across all
+     * batches.
      *
-     * <p>Calls above this limit wait for a free connection until the batch deadline, which
-     * prevents bursts from overflowing the server's accept queue or occupying every request
-     * thread. Keep it below {@code server.tomcat.threads.max}. Defaults to {@code 100}.
+     * <p>Calls above the connection limit wait until the batch deadline. If handlers from
+     * cancelled calls are still running at the limit, new sub-requests fail with {@code 503}.
+     * Keep this below {@code server.tomcat.threads.max}. When unset, it defaults to half of
+     * that value, which is {@code 100} with Tomcat's default of 200 threads.
      */
     @Min(1)
-    private int maxConnections = 100;
+    private Integer maxConnections;
 }

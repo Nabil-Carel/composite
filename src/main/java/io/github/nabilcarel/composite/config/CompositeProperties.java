@@ -7,6 +7,7 @@ import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
 /**
@@ -76,6 +77,16 @@ public class CompositeProperties {
      */
     @Min(1)
     private int maxConcurrentSubRequests = 5;
+
+    /**
+     * Maximum amount of referenced data one sub-request may insert into its URL, its headers,
+     * or its body.
+     *
+     * <p>Prevents a small request from repeating a reference to a large response and forcing
+     * the server to build a very large payload. A sub-request over this limit fails with
+     * {@code 400}. Defaults to {@code 1MB}.
+     */
+    private DataSize maxResolvedSize = DataSize.ofMegabytes(1);
 
     /**
      * Configuration for composite-request tracking headers injected into each sub-request.

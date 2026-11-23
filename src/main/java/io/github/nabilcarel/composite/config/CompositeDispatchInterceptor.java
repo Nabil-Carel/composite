@@ -4,28 +4,47 @@ import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.concurrent.Semaphore;
 import org.springframework.http.HttpStatus;
 import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.AsyncHandlerInterceptor;
 
 /**
- * Final allowlist check, made after Spring has selected the real handler for a sub-request.
+ * Final allowlist check and server-side concurrency limit for loopback sub-requests.
  *
  * <p>{@link EndpointRegistry} rejects bad targets early, but only Spring's dispatcher knows
  * the final handler, including functional routes. A loopback call carries
  * {@link #DISPATCH_HEADER}, and this interceptor answers {@code 403} unless the selected
  * handler has {@link CompositeEndpoint &#64;CompositeEndpoint}.
  *
+ * <p>A cancelled client call frees its connection while its handler keeps running, so a
+ * connection limit alone cannot bound server threads. This interceptor therefore counts
+ * running sub-request handlers and answers {@code 503} above the limit.
+ *
  * <p>The header grants nothing: a client that sends it directly can only restrict its own
  * request. Error dispatches are ignored so an annotated handler keeps its error status.
  *
  * @since 0.0.1
  */
-public class CompositeDispatchInterceptor implements HandlerInterceptor {
+public class CompositeDispatchInterceptor implements AsyncHandlerInterceptor {
 
     /** Header set on every loopback sub-request. Clients cannot set it inside a batch. */
     public static final String DISPATCH_HEADER = "X-Composite-Dispatch";
+
+    private static final String PERMIT_ATTRIBUTE = CompositeDispatchInterceptor.class.getName() + ".permit";
+
+    private final Semaphore permits;
+
+    /**
+     * Creates the interceptor.
+     *
+     * @param maxConcurrentHandlers maximum sub-request handlers running at the same time
+     */
+    public CompositeDispatchInterceptor(int maxConcurrentHandlers) {
+        this.permits = new Semaphore(maxConcurrentHandlers);
+    }
 
     @Override
     public boolean preHandle(@NonNull HttpServletRequest request,
@@ -36,12 +55,40 @@ public class CompositeDispatchInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        if (handler instanceof HandlerMethod handlerMethod
-                && handlerMethod.hasMethodAnnotation(CompositeEndpoint.class)) {
-            return true;
+        if (!(handler instanceof HandlerMethod handlerMethod)
+                || !handlerMethod.hasMethodAnnotation(CompositeEndpoint.class)) {
+            response.setStatus(HttpStatus.FORBIDDEN.value());
+            return false;
         }
 
-        response.setStatus(HttpStatus.FORBIDDEN.value());
-        return false;
+        if (!permits.tryAcquire()) {
+            response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+            return false;
+        }
+
+        request.setAttribute(PERMIT_ATTRIBUTE, Boolean.TRUE);
+        return true;
+    }
+
+    @Override
+    public void afterConcurrentHandlingStarted(@NonNull HttpServletRequest request,
+                                               @NonNull HttpServletResponse response,
+                                               @NonNull Object handler) {
+        release(request);
+    }
+
+    @Override
+    public void afterCompletion(@NonNull HttpServletRequest request,
+                                @NonNull HttpServletResponse response,
+                                @NonNull Object handler,
+                                @Nullable Exception ex) {
+        release(request);
+    }
+
+    private void release(HttpServletRequest request) {
+        if (request.getAttribute(PERMIT_ATTRIBUTE) != null) {
+            request.removeAttribute(PERMIT_ATTRIBUTE);
+            permits.release();
+        }
     }
 }

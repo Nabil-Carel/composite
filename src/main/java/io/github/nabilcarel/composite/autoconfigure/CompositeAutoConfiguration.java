@@ -128,13 +128,30 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * @return the MVC configurer
      */
     @Bean
-    public WebMvcConfigurer compositeDispatchConfigurer() {
+    public WebMvcConfigurer compositeDispatchConfigurer(CompositeLoopbackProperties loopbackProperties) {
+        int maxConcurrentHandlers = effectiveMaxConnections(loopbackProperties);
+
         return new WebMvcConfigurer() {
             @Override
             public void addInterceptors(InterceptorRegistry registry) {
-                registry.addInterceptor(new CompositeDispatchInterceptor());
+                registry.addInterceptor(new CompositeDispatchInterceptor(maxConcurrentHandlers));
             }
         };
+    }
+
+    private int effectiveMaxConnections(CompositeLoopbackProperties loopbackProperties) {
+        Integer configuredThreads = environment.getProperty("server.tomcat.threads.max", Integer.class, 200);
+        int serverThreads = configuredThreads == null ? 200 : configuredThreads;
+
+        if (loopbackProperties.getMaxConnections() == null) {
+            return Math.max(1, serverThreads / 2);
+        }
+
+        if (loopbackProperties.getMaxConnections() >= serverThreads) {
+            log.warn("composite.loopback.max-connections ({}) leaves no Tomcat threads for normal traffic ({})",
+                    loopbackProperties.getMaxConnections(), serverThreads);
+        }
+        return loopbackProperties.getMaxConnections();
     }
 
     /**
@@ -188,7 +205,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         String protocol = loopbackProperties.getProtocol();
 
         connectionProvider = ConnectionProvider.builder("composite-loopback")
-                .maxConnections(loopbackProperties.getMaxConnections())
+                .maxConnections(effectiveMaxConnections(loopbackProperties))
                 .pendingAcquireMaxCount(-1)
                 .pendingAcquireTimeout(properties.getRequestTimeout())
                 .build();
