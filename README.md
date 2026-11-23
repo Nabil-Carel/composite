@@ -97,7 +97,7 @@ The Composite Endpoint Library makes real HTTP loopback calls to your endpoints,
 
 **How it works:**
 
-- **Authentication Forwarding**: The library automatically forwards authentication headers and cookies from the parent composite request to all subrequests
+- **Authentication Forwarding**: `Authorization` and `Cookie` are forwarded from the parent composite request to all subrequests by default. Change the list with `composite.security.forwarded-headers`
 - **Authorization**: Each subrequest goes through your Spring Security filter chain exactly as a direct HTTP call would
 - **Method Security**: `@PreAuthorize`, `@Secured`, and other method-level annotations work normally
 - **No Privilege Escalation**: Composite requests can only access endpoints the calling user is authorized to access
@@ -128,7 +128,16 @@ The library automatically injects tracking headers to identify composite-initiat
 - `X-Composite-Request-Id: <unique-id>`
 - `X-Composite-Sub-Request-Id: <reference-id>`
 
-These can be used for auditing, logging, or custom security policies.
+Use these for auditing and logging only. A direct client can send the same header names, so they must not be used for authorization.
+
+**Sub-request safety rules:**
+
+- Targets must be application-relative paths. Absolute URLs, `//host`, dot segments, fragments and path parameters are rejected.
+- A sub-request runs only if the handler Spring selects has `@CompositeEndpoint`.
+- Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused.
+- Response values are substituted once, so stored data cannot act as a `${...}` reference.
+- Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
+- Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
 
 ## Installation
 
@@ -163,7 +172,7 @@ Authorization: Bearer <your-token>
 Content-Type: application/json
 
 {
-  "compositeRequest": [
+  "subRequests": [
     {
       "method": "GET",
       "url": "/api/account/1",
@@ -197,6 +206,22 @@ Content-Type: application/json
 }
 ```
 
+### 4. Configure it if needed
+```properties
+composite.base-path=/api/composite
+composite.controller.enabled=true
+composite.request-timeout=60s
+composite.max-sub-requests-per-composite=25
+composite.max-depth=10
+composite.security.forwarded-headers=Authorization,Cookie
+composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-None-Match,If-Modified-Since,If-Unmodified-Since
+composite.security.blocked-headers=X-User-Id
+composite.header-injection.enabled=true
+composite.loopback.max-response-size=256KB
+```
+
+If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+
 ## How It Works
 
 The Composite Endpoint Library acts as an intelligent request orchestrator that coordinates multiple HTTP calls to your existing endpoints.
@@ -222,7 +247,7 @@ The Composite Endpoint Library acts as an intelligent request orchestrator that 
 
 **No business logic changes**: Your existing controllers remain unchanged. The library only adds orchestration and response aggregation.
 
-**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and uses Jackson's JSON path-like resolution to extract the `id` property.
+**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and reads `id` from its JSON response.
 
 ### Request Flow Example
 ```
@@ -230,7 +255,7 @@ POST /api/composite/execute
 Authorization: Bearer <token>
 
 {
-  "compositeRequest": [
+  "subRequests": [
     { "method": "GET", "url": "/api/account/123", "referenceId": "acc1" },
     { "method": "GET", "url": "/api/orders/${acc1.id}", "referenceId": "orders1" }
   ]
@@ -326,7 +351,7 @@ Yes, the default maximum is 25 sub-requests per composite call (matching Salesfo
 
 ### How does this handle request/response size limits?
 
-Composite requests are subject to normal Spring Boot request size limits (`server.servlet.max-request-size`). Large batches with big payloads may need to be split into smaller composite requests to stay within these limits.
+Composite requests are subject to normal Spring Boot request size limits (`server.servlet.max-request-size`). Large batches with big payloads may need to be split into smaller composite requests to stay within these limits. Each sub-response is limited to 256 KB by default. A larger one fails with `503` unless you raise `composite.loopback.max-response-size`.
 
 ### Does this work with Spring WebFlux or other Java frameworks?
 

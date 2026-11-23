@@ -20,7 +20,7 @@ import org.springframework.web.context.request.async.DeferredResult;
  * Built-in REST controller that exposes the composite execution and endpoint discovery
  * endpoints.
  *
- * <p>The controller is registered only when {@code composite.controller-enabled} is
+ * <p>The controller is registered only when {@code composite.controller.enabled} is
  * {@code true} (the default). Set it to {@code false} to replace this controller with
  * your own — for example, to add custom security annotations or a different response
  * envelope.

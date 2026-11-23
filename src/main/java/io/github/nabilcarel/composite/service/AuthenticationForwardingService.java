@@ -8,13 +8,12 @@ import org.springframework.http.HttpHeaders;
  * request to each outbound sub-request.
  *
  * <p>The set of headers to forward is governed by
- * {@code composite.security.forwarded-headers}. By default no headers are forwarded; they must be
- * explicitly enumerated. Common candidates include {@code Authorization}, {@code Cookie},
- * and {@code X-API-Key}.
+ * {@code composite.security.forwarded-headers}, which defaults to {@code Authorization} and
+ * {@code Cookie}. Setting the property replaces that list.
  *
  * <h2>Configuration example</h2>
  * <pre class="code">
- * composite.security.forwarded-headers=Authorization,Cookie
+ * composite.security.forwarded-headers=Authorization,Cookie,X-API-Key
  * </pre>
  *
  * @see AuthenticationForwardingServiceImpl

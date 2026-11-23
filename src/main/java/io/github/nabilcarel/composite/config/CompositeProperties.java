@@ -31,14 +31,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class CompositeProperties {
 
     /**
-     * Whether the built-in {@link io.github.nabilcarel.composite.controller.CompositeController}
-     * is registered.
+     * Configuration for the built-in
+     * {@link io.github.nabilcarel.composite.controller.CompositeController}.
      *
-     * <p>Set to {@code false} to disable the default controller and provide your own, for
-     * example when you need to add custom security annotations or response wrapping.
-     * Defaults to {@code true}.
+     * @see Controller
      */
-    private boolean controllerEnabled = true;
+    private Controller controller = new Controller();
 
     /**
      * Base path under which the composite endpoints are mounted.
@@ -108,12 +106,32 @@ public class CompositeProperties {
     // -------------------------------------------------------------------------
 
     /**
+     * Configuration for the built-in composite controller.
+     *
+     * @since 0.0.1
+     */
+    @Getter
+    @Setter
+    public static class Controller {
+
+        /**
+         * Whether the built-in controller is registered.
+         *
+         * <p>Set {@code composite.controller.enabled=false} to provide your own controller,
+         * for example to add custom security annotations or response wrapping.
+         * Defaults to {@code true}.
+         */
+        private boolean enabled = true;
+    }
+
+    /**
      * Configuration for composite tracking headers that are injected into each outbound
      * sub-request.
      *
      * <p>When {@code enabled} is {@code true}, every sub-request carries three additional
-     * headers that allow downstream services to identify the originating composite request
-     * and the individual sub-request within it.
+     * headers that allow handlers to identify the originating composite request and the
+     * individual sub-request within it. Use them for tracing and auditing only: a direct
+     * client can send the same header names, so they must not be used for authorization.
      *
      * @since 0.0.1
      */
@@ -123,9 +141,9 @@ public class CompositeProperties {
 
         /**
          * Whether composite tracking headers are added to each sub-request.
-         * Defaults to {@code false}.
+         * Defaults to {@code true}.
          */
-        private boolean enabled = false;
+        private boolean enabled = true;
 
         /**
          * Header name used to flag a request as a composite sub-request.
@@ -162,11 +180,11 @@ public class CompositeProperties {
          * Names of request headers to propagate from the outer composite request to every
          * sub-request.
          *
-         * <p>Empty by default — headers are <em>not</em> forwarded unless explicitly listed
-         * here. Common values include {@code Authorization}, {@code Cookie}, and
-         * {@code X-API-Key}.
+         * <p>Defaults to {@code Authorization} and {@code Cookie}. Setting this property
+         * replaces the list. Applications using cookie authentication must keep CSRF
+         * protection on the composite endpoint and list their CSRF header here.
          */
-        private List<String> forwardedHeaders = new ArrayList<>();
+        private List<String> forwardedHeaders = new ArrayList<>(List.of("Authorization", "Cookie"));
 
         /**
          * Names of headers a client may set on an individual sub-request.

@@ -160,7 +160,8 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * context.
      *
      * @param loopbackProperties loopback configuration (protocol, timeouts, SSL)
-     * @return a configured {@link WebClient} targeting {@code {protocol}://localhost:{port}}
+     * @return a configured {@link WebClient} targeting the application's local URL, including
+     *         its context path and Spring MVC servlet path
      */
     @Bean("compositeWebClient")
     @Lazy
@@ -168,8 +169,6 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     public WebClient loopbackWebClient(CompositeLoopbackProperties loopbackProperties) {
         int maxResponseSize = toBufferLimit(loopbackProperties.getMaxResponseSize());
         String protocol = loopbackProperties.getProtocol();
-        String baseUrl = String.format("%s://localhost:%d", protocol, serverPort);
-        log.info("Creating WebClient with baseUrl: {}", baseUrl);
 
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis())
@@ -178,6 +177,11 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         if ("https".equalsIgnoreCase(protocol)) {
             httpClient = configureHttpsClient(httpClient, loopbackProperties);
         }
+
+        String baseUrl = String.format("%s://localhost:%d%s%s", protocol, serverPort,
+                normalizePathPrefix(environment.getProperty("server.servlet.context-path")),
+                normalizePathPrefix(environment.getProperty("spring.mvc.servlet.path")));
+        log.info("Creating WebClient with baseUrl: {}", baseUrl);
 
         // Sub-request URLs are already encoded by SubRequestTarget and must not be encoded again.
         DefaultUriBuilderFactory uriBuilderFactory = new DefaultUriBuilderFactory(baseUrl);
@@ -188,6 +192,24 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(maxResponseSize))
                 .build();
+    }
+
+    private static String normalizePathPrefix(String path) {
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+
+        String normalized = path.trim();
+        if (normalized.endsWith("/*")) {
+            normalized = normalized.substring(0, normalized.length() - 2);
+        }
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        if (normalized.isEmpty()) {
+            return "";
+        }
+        return normalized.startsWith("/") ? normalized : "/" + normalized;
     }
 
     private static int toBufferLimit(DataSize maxResponseSize) {
