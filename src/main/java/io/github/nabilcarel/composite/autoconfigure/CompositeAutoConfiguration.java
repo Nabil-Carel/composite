@@ -13,8 +13,11 @@ import jakarta.annotation.PreDestroy;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import java.net.URI;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
 import javax.net.ssl.SSLException;
 import org.springframework.core.env.Environment;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +38,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.util.DefaultUriBuilderFactory;
+import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriBuilderFactory;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
@@ -88,7 +93,7 @@ import reactor.netty.resources.ConnectionProvider;
 public class CompositeAutoConfiguration implements ApplicationListener<ServletWebServerInitializedEvent> {
     private final CompositeProperties properties;
     private final Environment environment;
-    private int serverPort;
+    private volatile int serverPort;
     private volatile ConnectionProvider connectionProvider;
 
     /** Releases loopback connections when the application context closes. */
@@ -199,14 +204,8 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
             httpClient = configureHttpsClient(httpClient, loopbackProperties);
         }
 
-        String baseUrl = String.format("%s://localhost:%d%s%s", protocol, serverPort,
-                normalizePathPrefix(environment.getProperty("server.servlet.context-path")),
-                normalizePathPrefix(environment.getProperty("spring.mvc.servlet.path")));
-        log.info("Creating WebClient with baseUrl: {}", baseUrl);
-
-        // Sub-request URLs are already encoded by SubRequestTarget and must not be encoded again.
-        DefaultUriBuilderFactory uriBuilderFactory = new DefaultUriBuilderFactory(baseUrl);
-        uriBuilderFactory.setEncodingMode(DefaultUriBuilderFactory.EncodingMode.NONE);
+        // A custom controller can create this client before the server has chosen its port.
+        UriBuilderFactory uriBuilderFactory = new LoopbackUriBuilderFactory(() -> loopbackBaseUrl(protocol));
 
         return WebClient.builder()
                 .uriBuilderFactory(uriBuilderFactory)
@@ -229,6 +228,62 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         CompositeHealthIndicator compositeHealthIndicator(ConcurrentMap<String, ResponseTracker> responseStore,
                                                           EndpointRegistry endpointRegistry) {
             return new CompositeHealthIndicator(responseStore, endpointRegistry);
+        }
+    }
+
+    private String loopbackBaseUrl(String protocol) {
+        if (serverPort <= 0) {
+            throw new IllegalStateException("Composite loopback used before the web server started");
+        }
+
+        String baseUrl = String.format("%s://localhost:%d%s%s", protocol, serverPort,
+                normalizePathPrefix(environment.getProperty("server.servlet.context-path")),
+                normalizePathPrefix(environment.getProperty("spring.mvc.servlet.path")));
+        log.info("Composite loopback base URL: {}", baseUrl);
+        return baseUrl;
+    }
+
+    /**
+     * Resolves the loopback base URL on first use. Sub-request URLs are already encoded by
+     * {@code SubRequestTarget}, so they are not encoded again.
+     */
+    private static final class LoopbackUriBuilderFactory implements UriBuilderFactory {
+
+        private final Supplier<String> baseUrl;
+        private volatile DefaultUriBuilderFactory delegate;
+
+        private LoopbackUriBuilderFactory(Supplier<String> baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        private DefaultUriBuilderFactory delegate() {
+            DefaultUriBuilderFactory current = delegate;
+            if (current == null) {
+                current = new DefaultUriBuilderFactory(baseUrl.get());
+                current.setEncodingMode(DefaultUriBuilderFactory.EncodingMode.NONE);
+                delegate = current;
+            }
+            return current;
+        }
+
+        @Override
+        public UriBuilder uriString(String uriTemplate) {
+            return delegate().uriString(uriTemplate);
+        }
+
+        @Override
+        public UriBuilder builder() {
+            return delegate().builder();
+        }
+
+        @Override
+        public URI expand(String uriTemplate, Map<String, ?> uriVariables) {
+            return delegate().expand(uriTemplate, uriVariables);
+        }
+
+        @Override
+        public URI expand(String uriTemplate, Object... uriVariables) {
+            return delegate().expand(uriTemplate, uriVariables);
         }
     }
 

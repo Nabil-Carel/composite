@@ -2,6 +2,7 @@ plugins {
 	id 'java-library'
     id 'maven-publish'
     id 'signing'
+    id 'jacoco'
 	id 'org.springframework.boot' version '3.4.0' apply false
 	id 'io.spring.dependency-management' version '1.1.6'
 }
@@ -51,8 +52,46 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 }
 
+jacoco {
+    toolVersion = '0.8.12'
+}
+
 test {
 	useJUnitPlatform()
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+// Runs the sample application against the built jar instead of the compiled classes.
+def packagedJarTest = tasks.register('packagedJarTest', Test) {
+    description = 'Runs the sample application integration tests against the packaged library jar.'
+    group = 'verification'
+    useJUnitPlatform()
+    dependsOn tasks.named('jar')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = files(tasks.named('jar')) + sourceSets.test.output +
+            (sourceSets.test.runtimeClasspath - sourceSets.main.output)
+    include '**/sample/**'
+    systemProperty 'composite.expect.packaged', 'true'
+}
+
+tasks.named('check') {
+    dependsOn packagedJarTest
+}
+
+// Compiles for Java 17 and optionally runs tests on another JDK: -PtestJavaVersion=21
+if (findProperty('testJavaVersion')) {
+    tasks.withType(Test).configureEach {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(findProperty('testJavaVersion') as int)
+        }
+    }
 }
 
 tasks.named('compileJava') {
