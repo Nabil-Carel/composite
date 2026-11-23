@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -317,15 +318,28 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         ResponseTracker tracker = new ResponseTrackerImpl(requestMap.size());
         responseStore.put(requestId, tracker);
         CompositeBatchContext batchContext = new CompositeBatchContextImpl(
-                tracker, new SubRequestCoordinatorImpl(dependencyMap), requestMap, this, requestId, context);
+                tracker, new SubRequestCoordinatorImpl(dependencyMap), requestMap, this, requestId, context,
+                properties.getMaxConcurrentSubRequests());
+
+        Runnable cleanup = () -> {
+            batchContext.cancel();
+            responseStore.remove(requestId);
+        };
 
         CompletableFuture<ResponseEntity<CompositeResponse>> result = tracker.getFuture()
                 .orTimeout(properties.getRequestTimeout().toMillis(), TimeUnit.MILLISECONDS)
                 .handle((compositeResponse, failure) -> {
-                    batchContext.cancel();
-                    responseStore.remove(requestId);
+                    cleanup.run();
                     return toResponseEntity(compositeResponse, failure, tracker, debugInfo);
                 });
+
+        // A cancelled stage skips the handler above, so cancellation cleans up directly.
+        result.whenComplete((ignored, failure) -> {
+            if (failure instanceof CancellationException) {
+                cleanup.run();
+                tracker.cancel(failure);
+            }
+        });
 
         try {
             batchContext.startInitialRequests();
@@ -347,7 +361,12 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                 ? failure.getCause()
                 : failure;
         boolean timedOut = cause instanceof TimeoutException;
-        log.error("Composite execution failed: {}", cause.getMessage(), cause);
+
+        if (cause instanceof CancellationException) {
+            log.debug("Composite execution cancelled");
+        } else {
+            log.error("Composite execution failed: {}", cause.getMessage(), cause);
+        }
 
         CompositeResponse errorResponse = CompositeResponse.builder()
                 .responses(new HashMap<>(tracker.getSubResponseMap()))

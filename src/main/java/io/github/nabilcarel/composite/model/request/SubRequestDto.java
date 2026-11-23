@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
@@ -110,6 +111,15 @@ public class SubRequestDto {
     @Builder.Default
     @JsonSetter(nulls = Nulls.AS_EMPTY)
     private Map<String, String> headers = new HashMap<>();
+
+    /**
+     * Rejects unknown fields regardless of the host application's Jackson settings, so a
+     * misspelled or unsupported option cannot be silently ignored.
+     */
+    @JsonAnySetter
+    void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unknown sub-request field: " + name);
+    }
 
     /**
      * Bean Validation constraint that ensures a request body is present for methods that

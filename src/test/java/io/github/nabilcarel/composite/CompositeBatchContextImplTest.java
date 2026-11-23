@@ -16,11 +16,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -45,7 +48,7 @@ class CompositeBatchContextImplTest {
 
     @Test
     void constructor_setsOnSubRequestResolvedCallback() {
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         verify(tracker).setOnSubRequestResolved(any());
     }
@@ -61,7 +64,7 @@ class CompositeBatchContextImplTest {
                 .thenReturn(Mono.empty());
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         batchContext.startInitialRequests();
 
@@ -77,7 +80,7 @@ class CompositeBatchContextImplTest {
         when(coordinator.markInProgress("a")).thenReturn(false);
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         batchContext.startInitialRequests();
 
@@ -97,7 +100,7 @@ class CompositeBatchContextImplTest {
                 .thenReturn(Mono.empty());
 
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         batchContext.startInitialRequests();
 
@@ -118,7 +121,7 @@ class CompositeBatchContextImplTest {
         when(requestService.forwardSubrequest(eq(reqB), eq(BATCH_ID), eq(requestContext)))
                 .thenReturn(Mono.empty());
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
@@ -140,7 +143,7 @@ class CompositeBatchContextImplTest {
         when(coordinator.markInProgress("b")).thenReturn(true);
         when(tracker.getSubResponseMap()).thenReturn(Map.of("a", failedResponse));
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
@@ -160,7 +163,7 @@ class CompositeBatchContextImplTest {
 
         when(coordinator.markResolved("a")).thenReturn(List.of());
 
-        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
         callbackCaptor.getValue().accept("a");
@@ -172,7 +175,7 @@ class CompositeBatchContextImplTest {
     void cancel_preventsDependentDispatch() {
         ArgumentCaptor<Consumer<String>> callbackCaptor = ArgumentCaptor.forClass(Consumer.class);
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
         verify(tracker).setOnSubRequestResolved(callbackCaptor.capture());
 
         batchContext.cancel();
@@ -183,9 +186,84 @@ class CompositeBatchContextImplTest {
     }
 
     @Test
+    void startInitialRequests_startsOnlyUpToTheLimit_thenDrainsAsCallsFinish() {
+        List<String> ids = List.of("a", "b", "c");
+        Map<String, Sinks.Empty<Void>> calls = new HashMap<>();
+        for (String id : ids) {
+            SubRequest subRequest = createSubRequest(id, "/api/" + id, "GET");
+            requestMap.put(id, subRequest);
+            Sinks.Empty<Void> call = Sinks.empty();
+            calls.put(id, call);
+            when(requestService.forwardSubrequest(subRequest, BATCH_ID, requestContext)).thenReturn(call.asMono());
+        }
+        when(coordinator.getInitialReadySubRequests()).thenReturn(ids);
+        when(coordinator.markInProgress(anyString())).thenReturn(true);
+
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 1)
+                .startInitialRequests();
+
+        verify(requestService, times(1)).forwardSubrequest(any(), any(), any());
+
+        calls.get("a").tryEmitEmpty();
+        verify(requestService, times(2)).forwardSubrequest(any(), any(), any());
+
+        calls.get("b").tryEmitEmpty();
+        verify(requestService, times(3)).forwardSubrequest(any(), any(), any());
+    }
+
+    @Test
+    void cancel_stopsQueuedSubRequestsAndCancelsTheRunningCall() {
+        SubRequest reqA = createSubRequest("a", "/api/a", "GET");
+        SubRequest reqB = createSubRequest("b", "/api/b", "GET");
+        requestMap.put("a", reqA);
+        requestMap.put("b", reqB);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        when(coordinator.getInitialReadySubRequests()).thenReturn(List.of("a", "b"));
+        when(coordinator.markInProgress(anyString())).thenReturn(true);
+        when(requestService.forwardSubrequest(reqA, BATCH_ID, requestContext))
+                .thenReturn(Mono.<Void>never().doOnCancel(() -> cancelled.set(true)));
+
+        CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 1);
+        batchContext.startInitialRequests();
+        batchContext.cancel();
+
+        assertThat(cancelled).isTrue();
+        verify(requestService, never()).forwardSubrequest(eq(reqB), any(), any());
+    }
+
+    @Test
+    void dispatchFailure_isRecorded_andDoesNotStrandQueuedWork() {
+        SubRequest reqA = createSubRequest("a", "/api/a", "GET");
+        SubRequest reqB = createSubRequest("b", "/api/b", "GET");
+        requestMap.put("a", reqA);
+        requestMap.put("b", reqB);
+        when(coordinator.getInitialReadySubRequests()).thenReturn(List.of("a", "b"));
+        when(coordinator.markInProgress(anyString())).thenReturn(true);
+        when(requestService.forwardSubrequest(reqA, BATCH_ID, requestContext))
+                .thenThrow(new IllegalStateException("boom"));
+        when(requestService.forwardSubrequest(reqB, BATCH_ID, requestContext)).thenReturn(Mono.empty());
+
+        new CompositeBatchContextImpl(tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 1)
+                .startInitialRequests();
+
+        ArgumentCaptor<SubResponse> response = ArgumentCaptor.forClass(SubResponse.class);
+        verify(tracker).addResponse(eq("a"), response.capture());
+        assertThat(response.getValue().getHttpStatus()).isEqualTo(500);
+        verify(requestService).forwardSubrequest(reqB, BATCH_ID, requestContext);
+    }
+
+    @Test
+    void constructor_rejectsInvalidConcurrencyLimit() {
+        assertThatThrownBy(() -> new CompositeBatchContextImpl(
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void getTracker_returnsTrackerInstance() {
         CompositeBatchContextImpl batchContext = new CompositeBatchContextImpl(
-                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext);
+                tracker, coordinator, requestMap, requestService, BATCH_ID, requestContext, 5);
 
         assertThat(batchContext.getTracker()).isSameAs(tracker);
     }

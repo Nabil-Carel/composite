@@ -10,12 +10,5 @@
  *   <li>{@link io.github.nabilcarel.composite.model.response.CompositeDebugInfo} — optional
  *       debug payload included when {@code composite.debug-enabled=true}.</li>
  * </ul>
- *
- * <p>Internal infrastructure:
- * <ul>
- *   <li>{@link io.github.nabilcarel.composite.model.response.SubResponseWrapper} — captures
- *       a sub-request response body into an in-memory buffer without committing the real
- *       HTTP response.</li>
- * </ul>
  */
 package io.github.nabilcarel.composite.model.response;

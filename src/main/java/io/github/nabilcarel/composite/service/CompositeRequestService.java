@@ -56,6 +56,10 @@ public interface CompositeRequestService {
      * {@code 504 Gateway Timeout}. Cancelling a call does not stop a handler that is already
      * running, so a non-idempotent endpoint may still finish after the timeout.
      *
+     * <p>Cancelling the returned future cancels the batch in the same way. Embedded Tomcat does
+     * not report a client disconnect while an async request is waiting, so on Tomcat a
+     * disconnected batch runs until it finishes or reaches the timeout.
+     *
      * @param compositeRequest the parsed composite request
      * @param request          the current servlet request, read only on the calling thread
      *                         to capture forwarded headers and the security context

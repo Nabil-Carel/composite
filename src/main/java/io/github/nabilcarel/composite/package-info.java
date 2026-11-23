@@ -54,7 +54,7 @@
  *   <tr><td>{@code exception}</td><td>Library-specific exception hierarchy</td></tr>
  *   <tr><td>{@code model}</td><td>Runtime coordination types (tracker, coordinator)</td></tr>
  *   <tr><td>{@code model.request}</td><td>Request DTOs and batch context</td></tr>
- *   <tr><td>{@code model.response}</td><td>Response DTOs and servlet response wrapper</td></tr>
+ *   <tr><td>{@code model.response}</td><td>Response DTOs</td></tr>
  *   <tr><td>{@code service}</td><td>Service interfaces and implementations</td></tr>
  *   <tr><td>{@code util}</td><td>Shared regex pattern constants</td></tr>
  * </table>

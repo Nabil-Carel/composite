@@ -1,11 +1,13 @@
 package io.github.nabilcarel.composite.config;
 
+import jakarta.validation.constraints.Min;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * Configuration properties for the Composite library, bound to the {@code composite} prefix.
@@ -26,6 +28,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @since 0.0.1
  */
 @ConfigurationProperties(prefix = "composite")
+@Validated
 @Getter
 @Setter
 public class CompositeProperties {
@@ -63,6 +66,16 @@ public class CompositeProperties {
      * {@code 25}.
      */
     private int maxSubRequestsPerComposite = 25;
+
+    /**
+     * Maximum number of sub-requests from one batch that may run at the same time.
+     *
+     * <p>Each running sub-request occupies a server request thread, so this limit prevents
+     * one batch from starving normal traffic. Must be at least {@code 1}. Defaults to
+     * {@code 5}.
+     */
+    @Min(1)
+    private int maxConcurrentSubRequests = 5;
 
     /**
      * Configuration for composite-request tracking headers injected into each sub-request.

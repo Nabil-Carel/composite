@@ -18,6 +18,7 @@ import javax.net.ssl.SSLException;
 import org.springframework.core.env.Environment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -171,8 +172,11 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         String protocol = loopbackProperties.getProtocol();
 
         HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis())
-                .responseTimeout(loopbackProperties.getResponseTimeout());
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis());
+
+        if (loopbackProperties.getResponseTimeout() != null) {
+            httpClient = httpClient.responseTimeout(loopbackProperties.getResponseTimeout());
+        }
 
         if ("https".equalsIgnoreCase(protocol)) {
             httpClient = configureHttpsClient(httpClient, loopbackProperties);
@@ -192,6 +196,23 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(maxResponseSize))
                 .build();
+    }
+
+    /**
+     * Registers the health indicator only when Spring Boot Actuator is present.
+     *
+     * @since 0.0.1
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.boot.actuate.health.HealthIndicator")
+    static class CompositeHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(name = "compositeHealthIndicator")
+        CompositeHealthIndicator compositeHealthIndicator(ConcurrentMap<String, ResponseTracker> responseStore,
+                                                          EndpointRegistry endpointRegistry) {
+            return new CompositeHealthIndicator(responseStore, endpointRegistry);
+        }
     }
 
     private static String normalizePathPrefix(String path) {

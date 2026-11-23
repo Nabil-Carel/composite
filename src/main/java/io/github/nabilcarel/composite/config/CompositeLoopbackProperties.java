@@ -45,11 +45,12 @@ public final class CompositeLoopbackProperties {
     private Duration connectTimeout = Duration.ofSeconds(5);
 
     /**
-     * Maximum time to wait for the loopback server to begin sending a response after the
-     * request has been sent.
-     * Defaults to {@code 10s}.
+     * Optional maximum time to wait for the loopback server to begin sending a response.
+     *
+     * <p>When unset (the default), each call is limited by {@code composite.sub-request-timeout}
+     * or, if that is also unset, {@code composite.request-timeout}.
      */
-    private Duration responseTimeout = Duration.ofSeconds(10);
+    private Duration responseTimeout;
 
     /**
      * Protocol used for loopback calls: {@code http} or {@code https}.

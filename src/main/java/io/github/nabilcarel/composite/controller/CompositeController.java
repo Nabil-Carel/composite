@@ -8,6 +8,7 @@ import io.github.nabilcarel.composite.service.CompositeRequestService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -85,7 +86,13 @@ public class CompositeController {
         DeferredResult<ResponseEntity<CompositeResponse>> result = new DeferredResult<>(
                 properties.getRequestTimeout().toMillis() + ASYNC_TIMEOUT_MARGIN_MILLIS);
 
-        requestService.execute(requestBody, request, response).whenComplete((compositeResponse, failure) -> {
+        CompletableFuture<ResponseEntity<CompositeResponse>> execution =
+                requestService.execute(requestBody, request, response);
+
+        // Fires on normal completion too, where cancelling a finished future has no effect.
+        result.onCompletion(() -> execution.cancel(true));
+
+        execution.whenComplete((compositeResponse, failure) -> {
             if (failure != null) {
                 result.setErrorResult(failure);
             } else {

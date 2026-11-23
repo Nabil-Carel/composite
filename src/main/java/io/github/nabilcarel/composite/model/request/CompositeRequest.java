@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
@@ -57,12 +58,11 @@ public class CompositeRequest {
     private List<@Valid SubRequestDto> subRequests;
 
     /**
-     * When {@code true}, any sub-request failure causes the entire composite request to be
-     * treated as failed.
-     *
-     * <p>Defaults to {@code false}, meaning partial success is allowed: completed
-     * sub-requests are still returned alongside error entries for failed ones.
+     * Rejects unknown fields regardless of the host application's Jackson settings, so a
+     * misspelled or unsupported option cannot be silently ignored.
      */
-    @Builder.Default
-    private boolean allOrNone = false;
+    @JsonAnySetter
+    void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unknown composite request field: " + name);
+    }
 }

@@ -11,12 +11,8 @@ import io.github.nabilcarel.composite.util.SubRequestTarget;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -99,36 +95,6 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         // Validate request URLs and access
         for (SubRequestDto subRequest : request.getSubRequests()) {
             errors.addAll(validateEndpointAccess(subRequest));
-        }
-
-        return errors;
-    }
-
-    public List<String> validateReferences(SubRequest request, Set<String> availableRefs) {
-        return new ArrayList<>(validateExpression(request.getUrl(), availableRefs));
-    }
-
-    private List<String> validateExpression(String expression, Set<String> availableRefs) {
-        List<String> errors = new ArrayList<>();
-        Matcher matcher = Pattern.compile("\\$\\{([^}]+)}")
-                .matcher(expression);
-
-        while (matcher.find()) {
-            String reference = matcher.group(1);
-
-            // Validate reference format - must be dot-separated identifiers
-            if (!reference.matches("[a-zA-Z0-9]+(?>\\.(?>[a-zA-Z0-9]+))*")) {
-                errors.add("Invalid reference format: " + reference);
-                log.error("Invalid reference format: {}", reference);
-            }
-
-            String refId = reference.split("\\.")[0];
-
-            if (!availableRefs.contains(refId)) {
-                errors.add("Invalid reference: " + reference +
-                                ". Available references: " + availableRefs);
-                log.error(errors.get(errors.size() - 1));
-            }
         }
 
         return errors;

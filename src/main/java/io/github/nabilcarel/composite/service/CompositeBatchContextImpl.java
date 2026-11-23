@@ -5,9 +5,11 @@ import io.github.nabilcarel.composite.model.SubRequestCoordinator;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
 import org.springframework.http.HttpStatus;
 import reactor.core.Disposable;
@@ -29,8 +31,9 @@ import reactor.core.publisher.Mono;
  *       double-dispatch.</li>
  *   <li>Checks whether any of the newly-ready sub-requests have failed dependencies; if so,
  *       a synthetic {@code 424 Failed Dependency} response is recorded immediately.</li>
- *   <li>Dispatches the remaining ready sub-requests via
- *       {@link CompositeRequestService#forwardSubrequest}.</li>
+ *   <li>Queues the remaining ready sub-requests and dispatches them via
+ *       {@link CompositeRequestService#forwardSubrequest}, never exceeding the batch's
+ *       concurrency limit.</li>
  * </ol>
  *
  * @see CompositeBatchContext
@@ -44,6 +47,9 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     private final CompositeRequestService requestService;
     private final String batchId;
     private final SubRequestContext context;
+    private final int maxConcurrentSubRequests;
+    private final Queue<String> readyQueue = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger inFlight = new AtomicInteger();
     private final Disposable.Composite subscriptions = Disposables.composite();
 
     public CompositeBatchContextImpl(
@@ -52,14 +58,20 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             Map<String, SubRequest> requestMap,
             CompositeRequestService requestService,
             String batchId,
-            SubRequestContext context
+            SubRequestContext context,
+            int maxConcurrentSubRequests
     ) {
+        if (maxConcurrentSubRequests < 1) {
+            throw new IllegalArgumentException("maxConcurrentSubRequests must be at least 1");
+        }
+
         this.tracker = tracker;
         this.coordinator = coordinator;
         this.requestMap = requestMap;
         this.requestService = requestService;
         this.batchId = batchId;
         this.context = context;
+        this.maxConcurrentSubRequests = maxConcurrentSubRequests;
 
         tracker.setOnSubRequestResolved(this::handleSubRequestResolved);
     }
@@ -69,19 +81,66 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             return;
         }
 
-        List<String> nowReady = coordinator.markResolved(resolvedId);
-        List<Mono<Void>> monos = nowReady.stream()
-                .filter(coordinator::markInProgress)
-                .map(id -> {
-                    SubRequest subRequest = requestMap.get(id);
-                    // Check if any dependency failed
-                    if (hasFailedDependency(subRequest)) {
-                        return createFailedDependencyResponse(id, subRequest);
-                    }
-                    return requestService.forwardSubrequest(subRequest, batchId, context);
+        for (String id : coordinator.markResolved(resolvedId)) {
+            if (coordinator.markInProgress(id)) {
+                SubRequest subRequest = requestMap.get(id);
+                if (hasFailedDependency(subRequest)) {
+                    createFailedDependencyResponse(id, subRequest);
+                } else {
+                    readyQueue.add(id);
+                }
+            }
+        }
+
+        drainReadyQueue();
+    }
+
+    /**
+     * Starts queued sub-requests while capacity remains. Safe to call from any thread: a
+     * completing call releases its slot before draining, so queued work cannot be stranded.
+     */
+    private void drainReadyQueue() {
+        while (!subscriptions.isDisposed() && !readyQueue.isEmpty()) {
+            int running = inFlight.get();
+
+            if (running >= maxConcurrentSubRequests) {
+                return;
+            }
+            if (!inFlight.compareAndSet(running, running + 1)) {
+                continue;
+            }
+
+            String id = readyQueue.poll();
+            if (id == null) {
+                inFlight.decrementAndGet();
+                continue;
+            }
+
+            dispatch(id);
+        }
+    }
+
+    private void dispatch(String id) {
+        Mono<Void> call;
+
+        try {
+            call = requestService.forwardSubrequest(requestMap.get(id), batchId, context);
+        } catch (RuntimeException e) {
+            inFlight.decrementAndGet();
+            tracker.addResponse(id, SubResponse.builder()
+                    .referenceId(id)
+                    .httpStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                    .body("Sub-request could not be dispatched")
+                    .build());
+            return;
+        }
+
+        subscriptions.add(call
+                .doFinally(signal -> {
+                    inFlight.decrementAndGet();
+                    drainReadyQueue();
                 })
-                .toList();
-        subscriptions.add(Mono.when(monos).subscribe());
+                .subscribe());
     }
 
     private boolean hasFailedDependency(SubRequest subRequest) {
@@ -102,7 +161,7 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
         return false;
     }
 
-    private Mono<Void> createFailedDependencyResponse(String subRequestId, SubRequest subRequest) {
+    private void createFailedDependencyResponse(String subRequestId, SubRequest subRequest) {
         Set<String> failedDeps = subRequest.getDependencies().stream()
                 .filter(depId -> {
                     SubResponse depResponse = tracker.getSubResponseMap().get(depId);
@@ -117,15 +176,16 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
                 .build();
         
         tracker.addResponse(subRequestId, failedDependencyResponse);
-        return Mono.empty();
     }
 
     public void startInitialRequests()  {
-        List<Mono<Void>> monos = coordinator.getInitialReadySubRequests().stream()
-                .filter(coordinator::markInProgress)
-                .map(id -> requestService.forwardSubrequest(requestMap.get(id), batchId, context))
-                .toList();
-        subscriptions.add(Mono.when(monos).subscribe());
+        for (String id : coordinator.getInitialReadySubRequests()) {
+            if (coordinator.markInProgress(id)) {
+                readyQueue.add(id);
+            }
+        }
+
+        drainReadyQueue();
     }
 
     @Override

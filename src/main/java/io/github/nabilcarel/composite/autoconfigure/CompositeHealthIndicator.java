@@ -6,8 +6,6 @@ import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.stereotype.Component;
 
 /**
  * Spring Boot Actuator {@link HealthIndicator} for the Composite library.
@@ -29,8 +27,6 @@ import org.springframework.stereotype.Component;
  * @see io.github.nabilcarel.composite.config.EndpointRegistry
  * @since 0.0.1
  */
-@Component
-@ConditionalOnClass(HealthIndicator.class)
 @RequiredArgsConstructor
 public class CompositeHealthIndicator implements HealthIndicator {
 

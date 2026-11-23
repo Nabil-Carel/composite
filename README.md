@@ -213,6 +213,7 @@ composite.base-path=/api/composite
 composite.controller.enabled=true
 composite.request-timeout=60s
 composite.max-sub-requests-per-composite=25
+composite.max-concurrent-sub-requests=5
 composite.max-depth=10
 composite.security.forwarded-headers=Authorization,Cookie
 composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-None-Match,If-Modified-Since,If-Unmodified-Since
@@ -221,7 +222,9 @@ composite.header-injection.enabled=true
 composite.loopback.max-response-size=256KB
 ```
 
-If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+
+Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones.
 
 ## How It Works
 
@@ -290,16 +293,6 @@ Authorization: Bearer <token>
 - **Simple debugging**: Set breakpoints in your actual controller methods
 - **Request tracing**: Standard HTTP tracing/monitoring tools work on subrequests
 - **Header injection**: Library adds tracking headers to identify composite-initiated requests
-
-## Example Endpoints
-
-The library can automatically register endpoints like:
-
-- `GET /api/composite/test`
-- `POST /api/composite/testPost`
-- `GET /api/composite/helloWorld`
-- `GET /api/composite/data`
-- `GET /api/composite/data/{id}`
 
 ## Frontend Benefits
 

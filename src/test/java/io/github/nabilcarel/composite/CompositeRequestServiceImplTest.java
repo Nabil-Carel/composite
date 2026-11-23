@@ -345,6 +345,38 @@ class CompositeRequestServiceImplTest {
         verify(responseTracker).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
     }
 
+    // ========== Cancellation Tests ==========
+
+    @Test
+    void execute_whenReturnedFutureIsCancelled_cancelsCallAndRemovesTracker() {
+        java.util.concurrent.atomic.AtomicBoolean callCancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
+        when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
+            .thenReturn(Optional.of(createEndpointInfo("/api/users/{id}")));
+        when(referenceResolver.resolveUrl(any(), anyString())).thenReturn("/api/users/123");
+        when(compositeRequestValidator.validateResolvedUrlFormat(anyString())).thenReturn(null);
+        when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
+        when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
+        when(requestBodySpec.exchangeToMono(any()))
+            .thenReturn(Mono.never().doOnCancel(() -> callCancelled.set(true)));
+        io.github.nabilcarel.composite.model.request.CompositeRequest request =
+            io.github.nabilcarel.composite.model.request.CompositeRequest.builder()
+                .subRequests(java.util.List.of(SubRequestDto.builder()
+                    .url("/api/users/123").method("GET").referenceId(REFERENCE_ID).build()))
+                .build();
+
+        var execution = service.execute(request,
+            mock(jakarta.servlet.http.HttpServletRequest.class),
+            mock(jakarta.servlet.http.HttpServletResponse.class));
+        assertThat(responseStore).hasSize(2);
+
+        execution.cancel(true);
+
+        assertThat(callCancelled).isTrue();
+        assertThat(responseStore).containsOnlyKeys(REQUEST_ID);
+    }
+
     // ========== Request Body Tests ==========
 
     @Test
