@@ -28,6 +28,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -165,6 +166,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     @Lazy
     @ConditionalOnMissingBean(name = "compositeWebClient")
     public WebClient loopbackWebClient(CompositeLoopbackProperties loopbackProperties) {
+        int maxResponseSize = toBufferLimit(loopbackProperties.getMaxResponseSize());
         String protocol = loopbackProperties.getProtocol();
         String baseUrl = String.format("%s://localhost:%d", protocol, serverPort);
         log.info("Creating WebClient with baseUrl: {}", baseUrl);
@@ -184,7 +186,18 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         return WebClient.builder()
                 .uriBuilderFactory(uriBuilderFactory)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(maxResponseSize))
                 .build();
+    }
+
+    private static int toBufferLimit(DataSize maxResponseSize) {
+        if (maxResponseSize == null
+                || maxResponseSize.toBytes() < 1
+                || maxResponseSize.toBytes() > Integer.MAX_VALUE) {
+            throw new IllegalStateException(
+                    "composite.loopback.max-response-size must be between 1B and " + Integer.MAX_VALUE + "B");
+        }
+        return (int) maxResponseSize.toBytes();
     }
 
     private HttpClient configureHttpsClient(HttpClient httpClient, CompositeLoopbackProperties loopbackProperties) {

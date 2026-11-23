@@ -11,19 +11,19 @@ import java.util.Map;
 public class TestArrayController {
 
     @GetMapping("/simple")
-    @CompositeEndpoint(String[].class)
+    @CompositeEndpoint
     public String[] getSimpleArray() {
         return new String[]{"first", "second", "third"};
     }
 
     @GetMapping("/numbers")
-    @CompositeEndpoint(Integer[].class)
+    @CompositeEndpoint
     public Integer[] getNumberArray() {
         return new Integer[]{1, 2, 3, 4, 5};
     }
 
     @GetMapping("/objects")
-    @CompositeEndpoint(ArrayItemList.class)
+    @CompositeEndpoint
     public ArrayItemList getObjectArray() {
         return new ArrayItemList(List.of(
             new ArrayItem("item1", "value1"),
@@ -33,7 +33,7 @@ public class TestArrayController {
     }
 
     @GetMapping("/nested")
-    @CompositeEndpoint(NestedArrayData.class)
+    @CompositeEndpoint
     public NestedArrayData getNestedArray() {
         return new NestedArrayData(
             List.of(
@@ -44,7 +44,7 @@ public class TestArrayController {
     }
 
     @GetMapping("/with-map")
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     public Map<String, Object> getArrayInMap() {
         return Map.of(
             "items", List.of("item1", "item2", "item3"),

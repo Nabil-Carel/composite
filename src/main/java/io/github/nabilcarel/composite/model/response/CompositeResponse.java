@@ -23,7 +23,7 @@ import lombok.*;
  *
  * SubResponse userResponse = result.getResponses().get("user");
  * if (userResponse.getHttpStatus() == 200) {
- *     User user = (User) userResponse.getBody();
+ *     JsonNode user = (JsonNode) userResponse.getBody();
  * }
  * </pre>
  *

@@ -23,14 +23,6 @@ public class Patterns {
     public static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
 
     /**
-     * Matches a single array/list index access in bracket notation.
-     *
-     * <p>Capture group 1 contains the numeric index as a string.
-     * Example match: {@code [0]} in the path {@code [0].name}.
-     */
-    public static final Pattern INDEX_PATTERN = Pattern.compile("\\[(\\d+)\\]");
-
-    /**
      * Splits a placeholder expression at the first {@code .} or {@code [} separator to
      * separate the root reference ID from the property path.
      *

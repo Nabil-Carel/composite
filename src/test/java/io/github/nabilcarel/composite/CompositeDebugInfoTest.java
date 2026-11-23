@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -59,6 +60,8 @@ class CompositeDebugInfoTest {
     private WebClient.RequestHeadersSpec requestHeadersSpec;
     @Mock
     private ClientResponse clientResponse;
+    @Mock
+    private ClientResponse.Headers clientResponseHeaders;
     @Mock
     private ResponseTracker responseTracker;
     @Mock
@@ -98,7 +101,7 @@ class CompositeDebugInfoTest {
     void forwardSubrequest_whenDebugEnabled_capturesOriginalAndResolvedUrl() {
         properties.setDebugEnabled(true);
         SubRequest subRequest = createSubRequest("/api/users/${dep.id}", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
@@ -127,7 +130,7 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(true);
         JsonNode body = objectMapper.readTree("{\"userId\": \"${dep.id}\"}");
         SubRequest subRequest = createSubRequestWithBody("/api/orders", "POST", body);
-        EndpointInfo endpointInfo = createEndpointInfo("/api/orders", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/orders");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
@@ -148,7 +151,7 @@ class CompositeDebugInfoTest {
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(Map.class))).thenReturn(Mono.just(Map.of("orderId", "new-order")));
+        stubJsonBody(Map.of("orderId", "new-order"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
         when(referenceResolver.resolveUrl(any(), anyString()))
@@ -176,7 +179,7 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(true);
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
         subRequest.getSubRequestDto().getHeaders().put("Authorization", "Bearer secret-token");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
@@ -206,7 +209,7 @@ class CompositeDebugInfoTest {
     void forwardSubrequest_whenDebugDisabled_doesNotCaptureDebugInfo() {
         properties.setDebugEnabled(false);
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -306,12 +309,18 @@ class CompositeDebugInfoTest {
         return subRequest;
     }
 
-    private EndpointInfo createEndpointInfo(String pattern, Class<?> returnClass) {
+    private EndpointInfo createEndpointInfo(String pattern) {
         return EndpointInfo.builder()
             .pattern(pattern)
             .method("GET")
-            .returnClass(returnClass)
             .build();
+    }
+
+    private void stubJsonBody(Object body) {
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.of(MediaType.APPLICATION_JSON));
+        when(clientResponse.bodyToMono(String.class))
+            .thenReturn(Mono.just(objectMapper.valueToTree(body).toString()));
     }
 
     private <T> void setupSuccessfulWebClientMock(T responseBody, Class<T> responseClass) {
@@ -320,7 +329,7 @@ class CompositeDebugInfoTest {
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(responseClass))).thenReturn(Mono.just(responseBody));
+        stubJsonBody(responseBody);
 
         when(requestBodySpec.exchangeToMono(any())).thenAnswer(invocation -> {
             java.util.function.Function<ClientResponse, Mono<?>> handler = invocation.getArgument(0);
@@ -339,7 +348,7 @@ class CompositeDebugInfoTest {
     }
 
     private void stubSuccessfulExecution() {
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
         when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))

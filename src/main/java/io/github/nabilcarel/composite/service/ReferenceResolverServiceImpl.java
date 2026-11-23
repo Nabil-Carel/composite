@@ -1,48 +1,30 @@
 package io.github.nabilcarel.composite.service;
 
-import static io.github.nabilcarel.composite.util.Patterns.*;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.NodeReference;
-import io.github.nabilcarel.composite.model.PlaceholderResolution;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.SubResponse;
+import io.github.nabilcarel.composite.util.ReferencePath;
 import io.github.nabilcarel.composite.util.ReferenceTemplate;
 import io.github.nabilcarel.composite.util.SubRequestTarget;
-import java.lang.reflect.Array;
-import java.util.Collection;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentMap;
-import java.util.regex.Matcher;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.BeanWrapperImpl;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /**
  * Default {@link ReferenceResolverService} implementation that resolves
- * {@code ${referenceId.propertyPath}} placeholder expressions by navigating the response
- * bodies stored in the shared {@link ResponseTracker} map.
+ * {@code ${referenceId.propertyPath}} placeholder expressions against the JSON responses
+ * stored in the shared {@link ResponseTracker} map.
  *
- * <p>Property path navigation supports four access modes:
- * <ol>
- *   <li><strong>Bean property</strong> (POJO) — via
- *       {@link org.springframework.beans.BeanWrapperImpl BeanWrapperImpl}, supporting both
- *       dot ({@code user.address.city}) and bracket ({@code user[address][city]})
- *       notation.</li>
- *   <li><strong>Map key</strong> — dot notation for simple keys; quoted bracket notation
- *       ({@code config['db.host']}) for keys containing dots or other separators.</li>
- *   <li><strong>List / Collection index</strong> — bracket numeric index notation
- *       ({@code items[0]}), with optional chained navigation ({@code items[0].name}).</li>
- *   <li><strong>Array index</strong> — same bracket notation as above, using
- *       {@link java.lang.reflect.Array#get(Object, int) Array.get}.</li>
- * </ol>
+ * <p>Paths are navigated by {@link ReferencePath}, so they use the JSON field names a client
+ * sees. A placeholder that is an entire body value keeps its JSON type. A placeholder inside
+ * a URL, a header or larger text must refer to a string, number or boolean.
  *
  * <p>Client templates are compiled once and substituted once. Inserted values are never
  * scanned again, so stored response data cannot act as a placeholder. URL values are
@@ -52,7 +34,6 @@ import org.springframework.stereotype.Service;
  * HTTP header injection.
  *
  * @see ReferenceResolverService
- * @see io.github.nabilcarel.composite.util.Patterns
  * @since 0.0.1
  */
 @Service
@@ -116,7 +97,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
             if (template.isSingleReference()) {
                 // Entire value is one reference, so it keeps its original type
-                nodeRef.overrideValue(toJsonValue(template.tokens().get(0).text(), batchId));
+                nodeRef.overrideValue(resolveToJson(template.tokens().get(0).text(), batchId));
             } else {
                 // Mixed content: "Hello ${user.name}, order #${order.id}!"
                 nodeRef.overrideValue(new TextNode(
@@ -125,317 +106,58 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         }
     }
 
+    private JsonNode resolveToJson(String expression, String batchId) {
+        JsonNode value = resolve(expression, batchId);
+        if (value.isNull()) {
+            throw new ReferenceResolutionException("Resolved value is null for: " + expression, expression);
+        }
+        return value.deepCopy();
+    }
+
     private String resolveToText(String expression, String batchId) {
-        PlaceholderResolution placeholder = parseExpression(expression, batchId);
-        return getResolvedValue(placeholder.root(), placeholder.objectId(), placeholder.propertyPath());
+        JsonNode value = resolveToJson(expression, batchId);
+
+        if (value.isBigDecimal()) {
+            return value.decimalValue().toPlainString();
+        }
+        if (value.isValueNode()) {
+            return value.asText();
+        }
+        throw new ReferenceResolutionException(
+                "Reference must be a string, number or boolean here: " + expression, expression);
     }
 
-    private JsonNode toJsonValue(String expression, String batchId) {
-        PlaceholderResolution placeholder = parseExpression(expression, batchId);
-        Object value = getResolvedObject(placeholder.root(), placeholder.objectId(), placeholder.propertyPath());
-
-        if (value == null) {
-            throw new ReferenceResolutionException(
-                    "Resolved value is null for path '" + placeholder.propertyPath() + "' on object '"
-                            + placeholder.objectId() + "'",
-                    placeholder.objectId());
-        }
-
-        try {
-            return mapper.valueToTree(value);
-        } catch (IllegalArgumentException e) {
-            // Types the composite mapper cannot serialize fall back to their text form
-            return new TextNode(value.toString());
-        }
-    }
-
-    /**
-     * Resolves the value of a property path on an object identified by objectId.
-     */
-    private String getResolvedValue(Object root, String objectId, String propertyPath) {
-        Object value = getResolvedObject(root, objectId, propertyPath);
-        if (value == null) {
-            throw new ReferenceResolutionException(
-                    "Resolved value is null for path '" + propertyPath + "' on object '" + objectId + "'",
-                    objectId);
-        }
-        return value.toString();
-    }
-
-    private Object getResolvedObject(Object root, String objectId, String propertyPath) {
-        if (root == null) {
-            throw new IllegalArgumentException("No object found for id: " + objectId);
-        }
-
-        if (root instanceof Map) {
-            return handleMapAccess((Map<?, ?>) root, propertyPath);
-        } else if (root.getClass().isArray()) {
-            return handleArrayAccess(root, propertyPath, objectId);
-        } else if (root instanceof Collection) {
-            return handleCollectionAccess((Collection<?>) root, propertyPath, objectId);
-        }
-        else {
-
-            BeanWrapperImpl wrapper = new BeanWrapperImpl(root);
-            Object value;
-
-            try {
-                // BeanWrapper handles both dot notation (user.name) and bracket notation (user[name], users[0])
-                value = wrapper.getPropertyValue(propertyPath);
-            } catch (Exception e) {
-                throw new IllegalArgumentException("Failed to resolve property path '" + propertyPath +
-                        "' on object '" + objectId + "'", e);
-            }
-
-            return value;
-        }
-    }
-
-    /**
-     * Parses expressions to handle both dot and bracket notation:
-     * - user.name -> objectId="user", propertyPath="name"
-     * - user['name'] -> objectId="user", propertyPath="['name']"
-     * - users[0].name -> objectId="users", propertyPath="[0].name"
-     * - config['database.host'] -> objectId="config", propertyPath="['database.host']"
-     */
-    private PlaceholderResolution parseExpression(String expression, String batchId) {
-        // Find the root object name (everything before first . or [)
-        String objectId;
-        String propertyPath;
-
-        int dotIndex = expression.indexOf('.');
-        int bracketIndex = expression.indexOf('[');
-
-        // Determine where the object name ends
-        int separatorIndex = -1;
-        if (dotIndex != -1 && bracketIndex != -1) {
-            separatorIndex = Math.min(dotIndex, bracketIndex);
-        } else if (dotIndex != -1) {
-            separatorIndex = dotIndex;
-        } else if (bracketIndex != -1) {
-            separatorIndex = bracketIndex;
-        }
-
-        if (separatorIndex == -1) {
-            // No property path, just the object itself
-            objectId = expression;
-            propertyPath = null;
-        } else {
-            objectId = expression.substring(0, separatorIndex);
-            propertyPath = expression.substring(separatorIndex);
-
-            // If starts with dot, remove it (BeanWrapper expects "name" not ".name")
-            if (propertyPath.startsWith(".")) {
-                propertyPath = propertyPath.substring(1);
-            }
-        }
-
+    private JsonNode resolve(String expression, String batchId) {
+        ReferencePath path = ReferencePath.parse(expression);
+        String referenceId = path.referenceId();
         ResponseTracker tracker = responseStore.get(batchId);
 
-        if(tracker == null) {
-            throw new ReferenceResolutionException(
-                    "No responses found for batch ID: " + batchId,
-                    objectId
-            );
+        if (tracker == null) {
+            throw new ReferenceResolutionException("No responses found for batch ID: " + batchId, referenceId);
         }
 
-        Map<String, SubResponse> subResponseMap = tracker.getSubResponseMap();
-
-        if (subResponseMap == null) {
+        Map<String, SubResponse> responses = tracker.getSubResponseMap();
+        if (responses == null) {
             throw new IllegalArgumentException("Response map not initialized for batch ID: " + batchId);
         }
 
-        SubResponse subResponse = subResponseMap.get(objectId);
-
+        SubResponse subResponse = responses.get(referenceId);
         if (subResponse == null) {
             throw new ReferenceResolutionException(
-                    "No response found for reference ID: " + objectId,
-                    objectId,
-                    String.join(", ", subResponseMap.keySet())
-            );
+                    "No response found for reference ID: " + referenceId,
+                    referenceId,
+                    String.join(", ", responses.keySet()));
         }
 
-        Object root = subResponse.getBody();
-
-        if (root == null) {
+        Object body = subResponse.getBody();
+        if (body == null) {
             throw new ReferenceResolutionException(
-                    "No response body found for reference ID: " + objectId,
-                    objectId,
-                    String.join(", ", responseStore.get(batchId).getSubResponseMap().keySet())
-            );
+                    "No response body found for reference ID: " + referenceId,
+                    referenceId,
+                    String.join(", ", responses.keySet()));
         }
 
-       // if (propertyPath != null && propertyPath.startsWith("[") && propertyPath.endsWith("]")) {
-            // Just remove the brackets: [database.host] -> database.host
-         //   propertyPath = propertyPath.substring(1, propertyPath.length() - 1);
-        //}
-
-        return new PlaceholderResolution(objectId, propertyPath, root);
-    }
-
-    private Object handleMapAccess(Map<?, ?> map, String propertyPath) {
-        // Handle bracket notation for literal keys: ['key'] or ["key"]
-        if (propertyPath.startsWith("['") || propertyPath.startsWith("[\"")) {
-            char quoteChar = propertyPath.charAt(1);  // ' or "
-            String closingBracket = quoteChar + "]";
-            int endIndex = propertyPath.indexOf(closingBracket);
-
-            if (endIndex == -1) {
-                throw new IllegalArgumentException("Unclosed bracket notation in: " + propertyPath);
-            }
-
-            // Extract literal key: ['database.host'] -> "database.host"
-            String literalKey = propertyPath.substring(2, endIndex);
-            Object value = map.get(literalKey);
-
-            if (value == null && !map.containsKey(literalKey)) {
-                throw new ReferenceResolutionException(
-                        "Property '" + literalKey + "' not found in response. Available keys: " + map.keySet(),
-                        literalKey);
-            }
-
-            // Check for remaining path after ['key']
-            if (endIndex + 2 < propertyPath.length()) {
-                String remainingPath = propertyPath.substring(endIndex + 2);
-                if (remainingPath.startsWith(".")) {
-                    remainingPath = remainingPath.substring(1);
-                }
-                return getResolvedObject(value, literalKey, remainingPath);
-            }
-
-            return value;
-        }
-
-        // Handle dot notation (nested access)
-        int dotIndex = propertyPath.indexOf('.');
-
-        if (dotIndex == -1) {
-            // Simple key, no nesting
-            Object value = map.get(propertyPath);
-            if (value == null && !map.containsKey(propertyPath)) {
-                throw new ReferenceResolutionException(
-                        "Property '" + propertyPath + "' not found in response. Available keys: " + map.keySet(),
-                        propertyPath);
-            }
-            return value;
-        }
-
-        // Split on first dot
-        String firstKey = propertyPath.substring(0, dotIndex);
-        Object value = map.get(firstKey);
-
-        if (value == null && !map.containsKey(firstKey)) {
-            throw new ReferenceResolutionException(
-                    "Property '" + firstKey + "' not found in response. Available keys: " + map.keySet(),
-                    firstKey);
-        }
-
-        if (value == null) {
-            return null; // Key exists but value is null
-        }
-
-        // Recursively resolve remaining path
-        String remainingPath = propertyPath.substring(dotIndex + 1);
-        return getResolvedObject(value, firstKey, remainingPath);
-    }
-
-    private Object handleCollectionAccess(Collection<?> collection, String propertyPath, String objectId) {
-        // propertyPath could be "[0]" or "[0].id" or "[0].users[1].name"
-        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
-
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
-        }
-
-        try {
-            int index = Integer.parseInt(matcher.group(1));
-
-            // Get element at index
-            Object element;
-            if (collection instanceof List) {
-                element = ((List<?>) collection).get(index);
-            } else {
-                // For Set/other collections, iterate to index
-                int i = 0;
-                element = null;
-                for (Object item : collection) {
-                    if (i == index) {
-                        element = item;
-                        break;
-                    }
-                    i++;
-                }
-                if (element == null) {
-                    throw new IndexOutOfBoundsException("Index " + index + " out of bounds");
-                }
-            }
-
-            // Extract remaining path after "[0]"
-            Optional<String> remainingPath = extractRemainingPath(propertyPath);
-
-            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
-                // Recursively resolve - handles any type (Map, List, Array, POJO)
-                return getResolvedObject(element, objectId, remainingPath.get());
-            }
-
-            // Just "[0]", no more path
-            return element;
-
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Collections require numeric index, got: " + propertyPath);
-        }
-    }
-
-    private Object handleArrayAccess(Object array, String propertyPath, String objectId) {
-        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
-
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
-        }
-
-        try {
-            int index = Integer.parseInt(matcher.group(1));
-            Object element = Array.get(array, index);
-
-            // Extract remaining path after "[0]"
-            Optional<String> remainingPath = extractRemainingPath(propertyPath);
-
-            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
-                // Recursively resolve - handles any type (Map, List, Array, POJO)
-                return getResolvedObject(element, objectId, remainingPath.get());
-            }
-
-            return element;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Arrays require numeric index, got: " + propertyPath);
-        } catch (ArrayIndexOutOfBoundsException e) {
-            throw new IllegalArgumentException("Array index out of bounds: " + propertyPath);
-        }
-    }
-
-    private Optional<String> extractRemainingPath(String propertyPath) {
-        // propertyPath examples:
-        // "[0]" → return null or ""
-        // "[0].id" → return "id"
-        // "[0].users[1].name" → return "users[1].name"
-
-        int closeBracket = propertyPath.indexOf(']');
-
-        if (closeBracket == -1) {
-            return Optional.empty();  // No bracket found
-        }
-
-        if (closeBracket >= propertyPath.length() - 1) {
-            return Optional.empty();  // Nothing after the bracket
-        }
-
-        String remaining = propertyPath.substring(closeBracket + 1);
-
-        // Remove leading dot if present
-        if (remaining.startsWith(".")) {
-            remaining = remaining.substring(1);
-        }
-
-        return Optional.of(remaining);
+        JsonNode root = body instanceof JsonNode json ? json : mapper.valueToTree(body);
+        return path.navigate(root);
     }
 }

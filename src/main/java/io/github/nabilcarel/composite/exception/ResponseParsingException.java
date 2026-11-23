@@ -1,10 +1,7 @@
 package io.github.nabilcarel.composite.exception;
 
 /**
- * Thrown when the response body of a loopback sub-request cannot be deserialised into the
- * type declared by
- * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint#value()
- * &#64;CompositeEndpoint}.
+ * Thrown when the response body of a loopback sub-request cannot be parsed.
  *
  * @see io.github.nabilcarel.composite.service.CompositeRequestService
  * @since 0.0.1

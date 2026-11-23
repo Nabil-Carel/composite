@@ -1,6 +1,10 @@
 package io.github.nabilcarel.composite.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.cfg.JsonNodeFeature;
 import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
@@ -30,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +44,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ClientResponse;
@@ -50,6 +56,12 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeRequestServiceImpl implements CompositeRequestService{
+
+    /** Keeps numbers exact and rejects content after the first JSON value. */
+    private static final UnaryOperator<ObjectReader> JSON_RESPONSE_OPTIONS = reader -> reader
+            .with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .without(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES);
 
     private final EndpointRegistry endpointRegistry;
     @Qualifier("compositeObjectMapper")
@@ -164,18 +176,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             : properties.getRequestTimeout();
 
         return requestSpec
-                .exchangeToMono(response ->
-                        toBody(response, resolvedEndpointInfo.get().getReturnClass())
-                            .map(body -> {
-                                SubResponse.SubResponseBuilder subResponseBuilder = SubResponse.builder()
-                                        .referenceId(subRequest.getReferenceId())
-                                        .httpStatus(response.statusCode().value());
-                                if (!isVoidResponse(body)) {
-                                    subResponseBuilder.body(body);
-                                }
-                                return subResponseBuilder.build();
-                            })
-                )
+                .exchangeToMono(response -> toSubResponse(response, subRequest.getReferenceId()))
                 .timeout(timeout)
                 .doOnSuccess(subResponse -> {
                     ResponseTracker tracker = responseStore.get(requestId);
@@ -200,40 +201,65 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         return !method.equalsIgnoreCase("GET") && !method.equalsIgnoreCase("HEAD");
     }
 
-    private static final Object VOID_RESPONSE = new Object();
-
-    private Mono<Object> toBody(ClientResponse response, Class<?> bodyClass) {
+    private Mono<SubResponse> toSubResponse(ClientResponse response, String referenceId) {
         HttpStatusCode status = response.statusCode();
+        SubResponse emptyResponse = SubResponse.builder()
+                .referenceId(referenceId)
+                .httpStatus(status.value())
+                .build();
+
         if (status.is2xxSuccessful()) {
-            if (bodyClass != null && bodyClass != Void.class) {
-                return response.bodyToMono(bodyClass)
-                    .cast(Object.class)
-                    .switchIfEmpty(Mono.just(VOID_RESPONSE))
-                    .onErrorResume(e -> {
-                        // JSON parse error or type mismatch - return error as string
-                        log.warn("Failed to parse response body as {}: {}", bodyClass.getSimpleName(), e.getMessage());
-                        return Mono.just("Failed to parse response: " + e.getMessage());
-                    });
-            } else {
-                // Void return type - release body and signal void response
-                return response.releaseBody().thenReturn(VOID_RESPONSE);
-            }
-        } else if (status.isError()) {
             return response.bodyToMono(String.class)
-                .defaultIfEmpty("")
-                .map(errorBody -> {
-                    log.error("Error from subrequest: {} - {}", status, errorBody);
-                    return (Object) errorBody;
-                });
-        } else {
-            // 1xx informational or 3xx redirect - release body and signal void
-            log.warn("Received non-standard response status: {}", status);
-            return response.releaseBody().thenReturn(VOID_RESPONSE);
+                    .map(text -> successResponse(response, referenceId, text))
+                    .defaultIfEmpty(emptyResponse);
+        }
+
+        if (status.isError()) {
+            return response.bodyToMono(String.class)
+                    .defaultIfEmpty("")
+                    .map(errorBody -> {
+                        log.error("Error from subrequest: {} - {}", status, errorBody);
+                        return SubResponse.builder()
+                                .referenceId(referenceId)
+                                .httpStatus(status.value())
+                                .body(errorBody)
+                                .build();
+                    });
+        }
+
+        // 1xx informational or 3xx redirect
+        log.warn("Received non-standard response status: {}", status);
+        return response.releaseBody().thenReturn(emptyResponse);
+    }
+
+    private SubResponse successResponse(ClientResponse response, String referenceId, String text) {
+        SubResponse.SubResponseBuilder builder = SubResponse.builder()
+                .referenceId(referenceId)
+                .httpStatus(response.statusCode().value());
+
+        if (text.isBlank()) {
+            return builder.build();
+        }
+
+        if (!isJson(response.headers().contentType().orElse(null))) {
+            return builder.body(text).build();
+        }
+
+        try {
+            return builder.body(JSON_RESPONSE_OPTIONS.apply(objectMapper.reader()).readTree(text)).build();
+        } catch (JsonProcessingException e) {
+            log.warn("Sub-request {} returned invalid JSON", referenceId);
+            return builder
+                    .httpStatus(HttpStatus.BAD_GATEWAY.value())
+                    .body("Response body is not valid JSON")
+                    .build();
         }
     }
 
-    private boolean isVoidResponse(Object body) {
-        return body == VOID_RESPONSE;
+    private static boolean isJson(MediaType contentType) {
+        return contentType != null
+                && (MediaType.APPLICATION_JSON.isCompatibleWith(contentType)
+                || (contentType.getSubtype() != null && contentType.getSubtype().endsWith("+json")));
     }
 
     private void addErrorToTracker(String requestId, String referenceId, int status, String message) {

@@ -81,7 +81,6 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
                         info = EndpointInfo.builder()
                                 .pattern(pattern.getPatternString())
                                 .method(method)
-                                .returnClass(annotation.value())
                                 .build();
                         endpoints.add(info);
                         log.info("Registered composite endpoint: {} {}", method, pattern.getPatternString());
@@ -170,11 +169,5 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
 
         /** Optional human-readable description of the endpoint. */
         private String description;
-
-        /**
-         * The Java class into which the endpoint's response body should be deserialized,
-         * as declared by {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint#value()}.
-         */
-        private Class<?> returnClass;
     }
 }

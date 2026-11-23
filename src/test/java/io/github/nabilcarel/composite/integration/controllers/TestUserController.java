@@ -12,25 +12,25 @@ import java.util.List;
 public class TestUserController {
 
     @GetMapping("/{id}")
-    @CompositeEndpoint(User.class)
+    @CompositeEndpoint
     public User getUser(@PathVariable("id") String id) {
         return new User(id, "User " + id, "user" + id + "@example.com");
     }
 
     @PostMapping
-    @CompositeEndpoint(User.class)
+    @CompositeEndpoint
     public User createUser(@RequestBody CreateUserRequest request) {
         return new User(request.id(), request.name(), request.email());
     }
 
     @GetMapping("/{id}/profile")
-    @CompositeEndpoint(UserProfile.class)
+    @CompositeEndpoint
     public UserProfile getUserProfile(@PathVariable("id") String id) {
         return new UserProfile(id, "Profile for user " + id, "Bio for user " + id);
     }
 
     @GetMapping("/{id}/orders")
-    @CompositeEndpoint(OrderList.class)
+    @CompositeEndpoint
     public OrderList getUserOrders(@PathVariable("id") String id) {
         return new OrderList(List.of(
             new Order("order1", id, 100.0),
@@ -39,7 +39,7 @@ public class TestUserController {
     }
 
     @GetMapping("/{id}/settings")
-    @CompositeEndpoint(java.util.Map.class)
+    @CompositeEndpoint
     public Map<String, Object> getUserSettings(@PathVariable("id") String id) {
         Map<String, Object> settings = new HashMap<>();
         settings.put("theme", "dark");
@@ -49,7 +49,7 @@ public class TestUserController {
     }
 
     @GetMapping("/{id}/nested")
-    @CompositeEndpoint(NestedData.class)
+    @CompositeEndpoint
     public NestedData getNestedData(@PathVariable("id") String id) {
         return new NestedData(
             new NestedData.InnerData(
@@ -59,7 +59,7 @@ public class TestUserController {
     }
 
     @GetMapping("/{id}/metadata")
-    @CompositeEndpoint(java.util.Map.class)
+    @CompositeEndpoint
     public Map<String, Object> getUserMetadata(@PathVariable("id") String id) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("category", "premium");

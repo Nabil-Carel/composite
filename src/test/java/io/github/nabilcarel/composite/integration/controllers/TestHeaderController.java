@@ -11,7 +11,7 @@ import java.util.Map;
 public class TestHeaderController {
 
     @GetMapping("/echo")
-    @CompositeEndpoint(java.util.Map.class)
+    @CompositeEndpoint
     public Map<String, String> echoHeaders(@RequestHeader Map<String, String> headers) {
         Map<String, String> result = new HashMap<>();
         headers.forEach((key, value) -> {
@@ -26,7 +26,7 @@ public class TestHeaderController {
     }
 
     @GetMapping("/auth")
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     public Map<String, String> checkAuth(@RequestHeader(value = "Authorization", required = false) String auth) {
         Map<String, String> result = new HashMap<>();
         result.put("hasAuth", auth != null ? "true" : "false");
@@ -37,7 +37,7 @@ public class TestHeaderController {
     }
 
     @GetMapping("/custom")
-    @CompositeEndpoint(java.util.Map.class)
+    @CompositeEndpoint
     public Map<String, String> checkCustomHeaders(
             @RequestHeader(value = "X-Custom-Header", required = false) String customHeader,
             @RequestHeader(value = "X-API-Key", required = false) String apiKey) {

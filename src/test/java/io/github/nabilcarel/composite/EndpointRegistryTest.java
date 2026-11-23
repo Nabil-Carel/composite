@@ -50,7 +50,7 @@ class EndpointRegistryTest {
 
     @Test
     void getEndpointInformations_afterDiscovery_returnsMatchingEndpoint() throws Exception {
-        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -59,12 +59,11 @@ class EndpointRegistryTest {
         assertThat(result).isPresent();
         assertThat(result.get().getPattern()).isEqualTo("/api/users/{id}");
         assertThat(result.get().getMethod()).isEqualTo("GET");
-        assertThat(result.get().getReturnClass()).isEqualTo(String.class);
     }
 
     @Test
     void getEndpointInformations_withWrongMethod_returnsEmpty() throws Exception {
-        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -75,7 +74,7 @@ class EndpointRegistryTest {
 
     @Test
     void getEndpointInformations_withNonMatchingPath_returnsEmpty() throws Exception {
-        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -93,7 +92,7 @@ class EndpointRegistryTest {
 
     @Test
     void getAvailableEndpoints_afterDiscovery_returnsAllEndpoints() throws Exception {
-        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -104,7 +103,7 @@ class EndpointRegistryTest {
 
     @Test
     void getEndpointInformations_withMethodCaseInsensitive_matchesEndpoint() throws Exception {
-        setupEndpointDiscovery("/api/users", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -115,7 +114,7 @@ class EndpointRegistryTest {
 
     @Test
     void getEndpointInformations_withLeadingSlash_matchesCorrectly() throws Exception {
-        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET, String.class);
+        setupEndpointDiscovery("/api/users/{id}", RequestMethod.GET);
 
         triggerDiscovery();
 
@@ -126,12 +125,12 @@ class EndpointRegistryTest {
 
     // ========== Helper Methods ==========
 
-    @CompositeEndpoint(String.class)
+    @CompositeEndpoint
     public String dummyEndpoint() {
         return "";
     }
 
-    private void setupEndpointDiscovery(String pattern, RequestMethod method, Class<?> returnType) throws Exception {
+    private void setupEndpointDiscovery(String pattern, RequestMethod method) throws Exception {
         Method dummyMethod = this.getClass().getMethod("dummyEndpoint");
         HandlerMethod handlerMethod = mock(HandlerMethod.class);
 

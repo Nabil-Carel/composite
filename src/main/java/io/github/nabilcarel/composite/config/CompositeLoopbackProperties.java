@@ -4,6 +4,7 @@ import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 
 /**
  * Configuration properties for the Reactor Netty {@link org.springframework.web.reactive.function.client.WebClient}
@@ -25,6 +26,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * composite.loopback.protocol=https
  * composite.loopback.connect-timeout=3s
  * composite.loopback.response-timeout=15s
+ * composite.loopback.max-response-size=1MB
  * </pre>
  *
  * @see CompositeProperties
@@ -66,4 +68,14 @@ public final class CompositeLoopbackProperties {
      * Defaults to {@code false}.
      */
     private boolean trustSelfSignedCertificates = false;
+
+    /**
+     * Maximum size of one sub-response held in memory.
+     *
+     * <p>A larger sub-response fails with {@code 503} and blocks its dependents. Each batch
+     * can hold up to one such response per sub-request, so raising this value raises the
+     * memory a single composite request can use. Must be between {@code 1B} and
+     * {@code 2147483647B}. Defaults to {@code 256KB}.
+     */
+    private DataSize maxResponseSize = DataSize.ofKilobytes(256);
 }

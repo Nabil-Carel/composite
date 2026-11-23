@@ -13,10 +13,9 @@ import java.lang.annotation.Target;
  * application startup. Only endpoints present in the registry may be targeted by sub-requests,
  * forming an explicit allowlist that prevents Server-Side Request Forgery (SSRF) attacks.
  *
- * <p>The required {@link #value()} attribute declares the Java type that the endpoint's
- * response body should be deserialized into. The composite runtime uses this type hint to
- * correctly parse the loopback HTTP response so that downstream sub-requests can reference
- * fields via the {@code ${referenceId.field}} placeholder syntax.
+ * <p>The annotation is a plain marker. Downstream sub-requests reference the endpoint's JSON
+ * response via the {@code ${referenceId.field}} placeholder syntax, using the field names a
+ * client would see.
  *
  * <h2>Usage example</h2>
  * <pre class="code">
@@ -25,7 +24,7 @@ import java.lang.annotation.Target;
  * public class UserController {
  *
  *     &#64;GetMapping("/{id}")
- *     &#64;CompositeEndpoint(User.class)
+ *     &#64;CompositeEndpoint
  *     public User getUser(&#64;PathVariable Long id) {
  *         return userService.findById(id);
  *     }
@@ -49,16 +48,4 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface CompositeEndpoint {
-
-  /**
-   * The expected response body type of the annotated endpoint.
-   *
-   * <p>The composite runtime deserializes the loopback response into an instance of this class
-   * so that downstream sub-requests can navigate its fields via the
-   * {@code ${referenceId.propertyPath}} placeholder syntax. Use {@link Void} for endpoints
-   * that produce no response body.
-   *
-   * @return the response body class; never {@code null}
-   */
-  Class<?> value();
 }

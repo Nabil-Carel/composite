@@ -31,7 +31,7 @@ public class TestSecurityController {
         lastHeaders = null;
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/items/{id}/details")
     public Map<String, Object> details(@PathVariable("id") String id) {
         lastId = id;
@@ -44,7 +44,7 @@ public class TestSecurityController {
         return Map.of("handler", "NOT_ALLOWLISTED");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/users/{id}")
     public Map<String, Object> user(@PathVariable("id") String id, HttpServletRequest request) {
         lastId = id;
@@ -66,40 +66,40 @@ public class TestSecurityController {
         return Map.of("handler", "NOT_ALLOWLISTED");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/secret")
     public Map<String, Object> secret() {
         return Map.of("token", "TOP-SECRET");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/stored")
     public Map<String, Object> stored() {
         return Map.of("template", "${secret.token}", "bare", "secret.token");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @PostMapping("/echo")
     public Map<String, Object> echo(@RequestBody Map<String, Object> body) {
         lastEcho = body;
         return body;
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/headers")
     public Map<String, String> headers(@RequestHeader Map<String, String> headers) {
         lastHeaders = headers;
         return Map.of("ok", "true");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/delay/{millis}")
     public Map<String, Object> delay(@PathVariable("millis") long millis) throws InterruptedException {
         Thread.sleep(millis);
         return Map.of("id", "delayed");
     }
 
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     @GetMapping("/missing")
     public Map<String, Object> missing() {
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "missing");

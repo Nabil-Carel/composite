@@ -113,7 +113,7 @@ The Composite Endpoint Library makes real HTTP loopback calls to your endpoints,
 ```java
 @GetMapping("/admin/users")
 @PreAuthorize("hasRole('ADMIN')")
-@CompositeEndpoint(List.class)
+@CompositeEndpoint
 public List<User> getUsers() {
     // Only accessible to admins
 }
@@ -148,13 +148,13 @@ Official release and simplified installation instructions will be provided in a 
 public class AccountController {
 
     @GetMapping("/account/{id}")
-    @CompositeEndpoint(value=Account.class)
+    @CompositeEndpoint
     public Account getAccount(@PathVariable String id) {
         // Your business logic
     }
 }
 ```
-The `value` parameter specifies the return type for proper JSON deserialization.
+References read the JSON response, so `${acc1.user_id}` uses the field name a client sees and cannot reach fields hidden with `@JsonIgnore`.
 
 ### 2. Send a composite request with dependencies
 ```http

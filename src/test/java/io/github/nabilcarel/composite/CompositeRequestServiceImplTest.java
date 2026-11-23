@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -56,6 +57,8 @@ class CompositeRequestServiceImplTest {
     private WebClient.RequestHeadersSpec requestHeadersSpec;
     @Mock
     private ClientResponse clientResponse;
+    @Mock
+    private ClientResponse.Headers clientResponseHeaders;
     @Mock
     private ResponseTracker responseTracker;
 
@@ -110,7 +113,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenResolvedUrlNotRegistered_returnsErrorResponse() {
         SubRequest subRequest = createSubRequest("/api/users/${user.id}", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", String.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         when(endpointRegistry.getEndpointInformations("GET", "/api/users/${user.id}"))
             .thenReturn(Optional.of(endpointInfo));
@@ -134,7 +137,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenReferenceResolutionFails_returnsErrorResponse() {
         SubRequest subRequest = createSubRequest("/api/users/${invalid.ref}", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", String.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
@@ -156,7 +159,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenUrlFormatInvalid_returnsErrorResponse() {
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", String.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
@@ -179,7 +182,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenSuccessful_addsResponseToTracker() {
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
         Map<String, String> responseBody = Map.of("id", "123", "name", "Test");
 
         setupSuccessfulWebClientMock(responseBody, Map.class);
@@ -197,13 +200,13 @@ class CompositeRequestServiceImplTest {
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(200);
-        assertThat(response.getBody()).isEqualTo(responseBody);
+        assertThat(response.getBody()).isEqualTo(objectMapper.valueToTree(responseBody));
     }
 
     @Test
     void forwardSubrequest_withVoidReturnType_addsResponseWithNullBody() {
         SubRequest subRequest = createSubRequest("/api/orders/123", "DELETE");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/orders/{id}", Void.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/orders/{id}");
 
         setupVoidWebClientMock();
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -228,7 +231,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_when4xxError_addsErrorResponseToTracker() {
         SubRequest subRequest = createSubRequest("/api/users/notfound", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupErrorWebClientMock(404, "Not Found");
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -250,7 +253,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_when5xxError_addsErrorResponseToTracker() {
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupErrorWebClientMock(500, "Internal Server Error");
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -272,7 +275,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenErrorWithEmptyBody_addsResponseWithEmptyString() {
         SubRequest subRequest = createSubRequest("/api/users/notfound", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupErrorWebClientMockWithEmptyBody(404);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -297,7 +300,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenWebClientThrowsException_addsServiceUnavailableResponse() {
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupWebClientExceptionMock(new RuntimeException("Connection refused"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
@@ -322,7 +325,7 @@ class CompositeRequestServiceImplTest {
     @Test
     void forwardSubrequest_whenHeaderInjectionEnabled_addsCompositeHeaders() {
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         properties.getHeaderInjection().setEnabled(true);
         properties.getHeaderInjection().setRequestHeader("X-Composite-Request");
@@ -348,14 +351,14 @@ class CompositeRequestServiceImplTest {
     void forwardSubrequest_withRequestBody_sendsBodyInRequest() throws Exception {
         JsonNode body = objectMapper.readTree("{\"name\": \"Test\"}");
         SubRequest subRequest = createSubRequestWithBody("/api/users", "POST", body);
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users");
 
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(Map.class))).thenReturn(Mono.just(Map.of("id", "new-id")));
+        stubJsonBody(Map.of("id", "new-id"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
         when(referenceResolver.resolveUrl(any(), anyString()))
@@ -399,12 +402,18 @@ class CompositeRequestServiceImplTest {
         return subRequest;
     }
 
-    private EndpointInfo createEndpointInfo(String pattern, Class<?> returnClass) {
+    private EndpointInfo createEndpointInfo(String pattern) {
         return EndpointInfo.builder()
             .pattern(pattern)
             .method("GET")
-            .returnClass(returnClass)
             .build();
+    }
+
+    private void stubJsonBody(Object body) {
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.of(MediaType.APPLICATION_JSON));
+        when(clientResponse.bodyToMono(String.class))
+            .thenReturn(Mono.just(objectMapper.valueToTree(body).toString()));
     }
 
     private <T> void setupSuccessfulWebClientMock(T responseBody, Class<T> responseClass) {
@@ -413,7 +422,7 @@ class CompositeRequestServiceImplTest {
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(responseClass))).thenReturn(Mono.just(responseBody));
+        stubJsonBody(responseBody);
 
         when(requestBodySpec.exchangeToMono(any())).thenAnswer(invocation -> {
             java.util.function.Function<ClientResponse, Mono<?>> handler = invocation.getArgument(0);
@@ -427,7 +436,7 @@ class CompositeRequestServiceImplTest {
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.NO_CONTENT);
-        when(clientResponse.releaseBody()).thenReturn(Mono.empty());
+        when(clientResponse.bodyToMono(String.class)).thenReturn(Mono.empty());
 
         when(requestBodySpec.exchangeToMono(any())).thenAnswer(invocation -> {
             java.util.function.Function<ClientResponse, Mono<?>> handler = invocation.getArgument(0);

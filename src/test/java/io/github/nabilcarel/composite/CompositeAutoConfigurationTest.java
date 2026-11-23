@@ -7,15 +7,19 @@ import io.github.nabilcarel.composite.model.ResponseTracker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.boot.web.server.WebServer;
 import org.springframework.core.env.Environment;
+import org.springframework.util.unit.DataSize;
 
 import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -78,6 +82,17 @@ class CompositeAutoConfigurationTest {
                 autoConfiguration.loopbackWebClient(loopbackProperties);
 
         assertThat(webClient).isNotNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1, Integer.MAX_VALUE + 1L})
+    void loopbackWebClient_withInvalidMaxResponseSize_failsClearly(long bytes) {
+        CompositeLoopbackProperties loopbackProperties = new CompositeLoopbackProperties();
+        loopbackProperties.setMaxResponseSize(DataSize.ofBytes(bytes));
+
+        assertThatThrownBy(() -> autoConfiguration.loopbackWebClient(loopbackProperties))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("max-response-size");
     }
 
     @Test

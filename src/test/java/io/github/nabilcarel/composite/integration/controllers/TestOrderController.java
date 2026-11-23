@@ -12,13 +12,13 @@ import java.util.Map;
 public class TestOrderController {
 
     @GetMapping("/{orderId}")
-    @CompositeEndpoint(Order.class)
+    @CompositeEndpoint
     public Order getOrder(@PathVariable("orderId") String orderId) {
         return new Order(orderId, "user123", 150.0, "pending");
     }
 
     @PostMapping
-    @CompositeEndpoint(Order.class)
+    @CompositeEndpoint
     public Order createOrder(@RequestBody CreateOrderRequest request) {
         return new Order(
             "order-" + System.currentTimeMillis(),
@@ -29,7 +29,7 @@ public class TestOrderController {
     }
 
     @GetMapping("/{orderId}/items")
-    @CompositeEndpoint(OrderItemList.class)
+    @CompositeEndpoint
     public OrderItemList getOrderItems(@PathVariable("orderId") String orderId) {
         return new OrderItemList(List.of(
             new OrderItem("item1", orderId, "Product A", 50.0),
@@ -38,39 +38,39 @@ public class TestOrderController {
     }
 
     @GetMapping("/{orderId}/status")
-    @CompositeEndpoint(java.util.Map.class)
+    @CompositeEndpoint
     public Map<String, String> getOrderStatus(@PathVariable("orderId") String orderId) {
         return Map.of("orderId", orderId, "status", "shipped");
     }
 
     @GetMapping("/error/{orderId}")
-    @CompositeEndpoint(Void.class)
+    @CompositeEndpoint
     public void getOrderError(@PathVariable("orderId") String orderId) {
         throw new RuntimeException("Order not found: " + orderId);
     }
 
     @GetMapping("/notfound/{orderId}")
-    @CompositeEndpoint(Order.class)
+    @CompositeEndpoint
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Order getOrderNotFound(@PathVariable("orderId") String orderId) {
         return null; // Will return 404
     }
 
     @DeleteMapping("/{orderId}")
-    @CompositeEndpoint(Void.class)
+    @CompositeEndpoint
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteOrder(@PathVariable("orderId") String orderId) {
         // Successful void response - returns 204 No Content
     }
 
     @GetMapping("/{orderId}/empty")
-    @CompositeEndpoint(Order.class)
+    @CompositeEndpoint
     public Order getEmptyOrder(@PathVariable("orderId") String orderId) {
         return null; // Returns 200 with null/empty body
     }
 
     @GetMapping("/slow/{orderId}")
-    @CompositeEndpoint(Order.class)
+    @CompositeEndpoint
     public Order getSlowOrder(@PathVariable("orderId") String orderId) throws InterruptedException {
         Thread.sleep(5000); // Simulate slow response
         return new Order(orderId, "user123", 150.0, "pending");

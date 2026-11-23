@@ -10,22 +10,19 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
  * <p>Placeholder syntax supports:
  * <ul>
  *   <li><strong>Dot notation</strong>: {@code ${user.address.city}} — navigates nested
- *       object fields using Spring's {@link org.springframework.beans.BeanWrapperImpl
- *       BeanWrapper}.</li>
- *   <li><strong>Bracket index notation</strong>: {@code ${items[0].name}} — accesses an
- *       element by numeric index in arrays, {@link java.util.List Lists}, and other
- *       {@link java.util.Collection Collections}.</li>
+ *       JSON fields by the names a client sees.</li>
+ *   <li><strong>Bracket index notation</strong>: {@code ${items[0].name}} — accesses a JSON
+ *       array element by numeric index.</li>
  *   <li><strong>Bracket key notation</strong>: {@code ${config['db.host']}} — accesses a
- *       {@link java.util.Map Map} entry whose key contains characters that would otherwise
- *       be treated as path separators.</li>
+ *       JSON field whose name contains characters that would otherwise be treated as path
+ *       separators.</li>
  *   <li><strong>Nested placeholders are rejected</strong>: {@code ${${ref}.id}} is invalid
  *       because values are substituted exactly once.</li>
  * </ul>
  *
- * <p>When a placeholder refers to a value that is the sole content of a body field, the
- * original Java type of the resolved value is preserved (e.g. {@link Integer} or
- * {@link java.util.List}). When placeholders are embedded in a larger string they are
- * always coerced to their {@link Object#toString()} representation.
+ * <p>When a placeholder is the sole content of a body field, the referenced value keeps its
+ * JSON type. A placeholder in a URL, a header or larger text must refer to a string, number
+ * or boolean.
  *
  * @see ReferenceResolverServiceImpl
  * @see io.github.nabilcarel.composite.util.Patterns

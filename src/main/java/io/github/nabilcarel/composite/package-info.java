@@ -24,11 +24,10 @@
  *   <li>Add the library as a dependency. Spring Boot auto-configuration activates it
  *       automatically.</li>
  *   <li>Annotate the controller methods you want to expose to composite clients with
- *       {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint @CompositeEndpoint},
- *       specifying the response body class:
+ *       {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint @CompositeEndpoint}:
  *       <pre class="code">
  *       &#64;GetMapping("/api/users/{id}")
- *       &#64;CompositeEndpoint(User.class)
+ *       &#64;CompositeEndpoint
  *       public User getUser(&#64;PathVariable Long id) { ... }
  *       </pre>
  *   </li>
