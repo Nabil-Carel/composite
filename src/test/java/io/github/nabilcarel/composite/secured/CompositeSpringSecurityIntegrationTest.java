@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -169,6 +170,80 @@ class CompositeSpringSecurityIntegrationTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getHeaders().get(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN))
                 .containsExactly(SecuredTestApplication.ALLOWED_ORIGIN);
+        }
+    }
+
+    @Nested
+    @SpringBootTest(
+        classes = SecuredTestApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+    )
+    @TestPropertySource(properties = "test.auth=jwt")
+    class RealJwt {
+
+        private static final String EXECUTE = "/api/composite/execute";
+
+        @Autowired
+        private TestRestTemplate rest;
+
+        @BeforeEach
+        void reset() {
+            SecuredController.reset();
+        }
+
+        @Test
+        void validToken_runsAsItsSubject_withItsRoles() throws Exception {
+            String token = SecuredTestApplication.issueJwt("root", Duration.ofMinutes(5), "USER", "ADMIN");
+
+            ResponseEntity<String> response = post(rest, EXECUTE, bearer(token),
+                batch(get("me", "/secure/me"), get("admin", "/secure/admin")));
+
+            JsonNode json = JSON.readTree(response.getBody());
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(json.at("/responses/me/body/name").asText()).isEqualTo("root");
+            assertThat(status(json, "admin")).isEqualTo(200);
+        }
+
+        @Test
+        void missingRole_deniesOnlyThatSubRequest() throws Exception {
+            String token = SecuredTestApplication.issueJwt("alice", Duration.ofMinutes(5), "USER");
+
+            ResponseEntity<String> response = post(rest, EXECUTE, bearer(token),
+                batch(get("admin", "/secure/admin"), get("me", "/secure/me"),
+                    write("dependent", "{\"id\":\"${admin.id}\"}")));
+
+            JsonNode json = JSON.readTree(response.getBody());
+            assertThat(status(json, "admin")).isEqualTo(403);
+            assertThat(status(json, "me")).isEqualTo(200);
+            assertThat(status(json, "dependent")).isEqualTo(424);
+            assertThat(SecuredController.ADMIN_CALLS).hasValue(0);
+            assertThat(SecuredController.WRITES).hasValue(0);
+        }
+
+        @Test
+        void expiredToken_isRejectedBeforeAnythingRuns() throws Exception {
+            String token = SecuredTestApplication.issueJwt("root", Duration.ofMinutes(-10), "USER", "ADMIN");
+
+            ResponseEntity<String> response = post(rest, EXECUTE, bearer(token),
+                batch(write("w", "{\"x\":1}")));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+            assertThat(SecuredController.WRITES).hasValue(0);
+        }
+
+        @Test
+        void tamperedToken_isRejectedBeforeAnythingRuns() throws Exception {
+            String token = SecuredTestApplication.issueJwt("alice", Duration.ofMinutes(5), "USER");
+            String[] parts = token.split("\\.");
+            String forgedPayload = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                ("{\"sub\":\"root\",\"roles\":[\"ADMIN\"],\"exp\":" + (System.currentTimeMillis() / 1000 + 300) + "}")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            ResponseEntity<String> response = post(rest, EXECUTE, bearer(parts[0] + "." + forgedPayload + "." + parts[2]),
+                batch(get("admin", "/secure/admin")));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+            assertThat(SecuredController.ADMIN_CALLS).hasValue(0);
         }
     }
 

@@ -1,10 +1,12 @@
 package io.github.nabilcarel.composite.config;
 
+import jakarta.validation.constraints.Min;
 import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.unit.DataSize;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * Configuration properties for the Reactor Netty {@link org.springframework.web.reactive.function.client.WebClient}
@@ -34,6 +36,7 @@ import org.springframework.util.unit.DataSize;
  * @since 0.0.1
  */
 @ConfigurationProperties(prefix = "composite.loopback")
+@Validated
 @Getter
 @Setter
 public final class CompositeLoopbackProperties {
@@ -79,4 +82,14 @@ public final class CompositeLoopbackProperties {
      * {@code 2147483647B}. Defaults to {@code 256KB}.
      */
     private DataSize maxResponseSize = DataSize.ofKilobytes(256);
+
+    /**
+     * Maximum number of loopback connections across all batches.
+     *
+     * <p>Calls above this limit wait for a free connection until the batch deadline, which
+     * prevents bursts from overflowing the server's accept queue or occupying every request
+     * thread. Keep it below {@code server.tomcat.threads.max}. Defaults to {@code 100}.
+     */
+    @Min(1)
+    private int maxConnections = 100;
 }

@@ -220,6 +220,7 @@ composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-Non
 composite.security.blocked-headers=X-User-Id
 composite.header-injection.enabled=true
 composite.loopback.max-response-size=256KB
+composite.loopback.max-connections=100
 ```
 
 If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.

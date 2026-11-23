@@ -9,6 +9,7 @@ import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
 import io.netty.channel.ChannelOption;
+import jakarta.annotation.PreDestroy;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
@@ -35,6 +36,7 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.util.DefaultUriBuilderFactory;
 import reactor.netty.http.client.HttpClient;
+import reactor.netty.resources.ConnectionProvider;
 
 /**
  * Spring Boot auto-configuration for the Composite library.
@@ -87,6 +89,15 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     private final CompositeProperties properties;
     private final Environment environment;
     private int serverPort;
+    private volatile ConnectionProvider connectionProvider;
+
+    /** Releases loopback connections when the application context closes. */
+    @PreDestroy
+    void closeConnectionProvider() {
+        if (connectionProvider != null) {
+            connectionProvider.dispose();
+        }
+    }
 
 
     /**
@@ -171,7 +182,13 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         int maxResponseSize = toBufferLimit(loopbackProperties.getMaxResponseSize());
         String protocol = loopbackProperties.getProtocol();
 
-        HttpClient httpClient = HttpClient.create()
+        connectionProvider = ConnectionProvider.builder("composite-loopback")
+                .maxConnections(loopbackProperties.getMaxConnections())
+                .pendingAcquireMaxCount(-1)
+                .pendingAcquireTimeout(properties.getRequestTimeout())
+                .build();
+
+        HttpClient httpClient = HttpClient.create(connectionProvider)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis());
 
         if (loopbackProperties.getResponseTimeout() != null) {

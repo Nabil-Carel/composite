@@ -46,6 +46,12 @@ class CompositeAutoConfigurationContextTest {
     }
 
     @Test
+    void invalidLoopbackConnectionLimit_failsAtStartup() {
+        runner.withPropertyValues("composite.loopback.max-connections=0")
+            .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void healthIndicator_isRegisteredWithActuator() {
         runner.run(context -> assertThat(context).hasBean("compositeHealthIndicator"));
     }

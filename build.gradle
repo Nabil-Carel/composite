@@ -1,12 +1,13 @@
 plugins {
 	id 'java-library'
     id 'maven-publish'
+    id 'signing'
 	id 'org.springframework.boot' version '3.4.0' apply false
 	id 'io.spring.dependency-management' version '1.1.6'
 }
 
 group = 'io.github.nabil-carel'
-version = '0.0.1-SNAPSHOT'
+version = '0.1.0'
 
 java {
 	toolchain {
@@ -47,6 +48,7 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.boot:spring-boot-actuator'
     testImplementation 'org.springframework.boot:spring-boot-starter-security'
+    testImplementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 }
 
 test {
@@ -70,6 +72,45 @@ publishing {
                     fromResolutionResult()
                 }
             }
+
+            pom {
+                name = 'Composite Spring Boot Starter'
+                description = 'Spring Boot starter for batching dependent REST calls into one composite request'
+                url = 'https://github.com/Nabil-Carel/composite'
+
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        distribution = 'repo'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id = 'Nabil-Carel'
+                        name = 'Nabil Gbaguidi'
+                        url = 'https://github.com/Nabil-Carel'
+                    }
+                }
+
+                scm {
+                    connection = 'scm:git:https://github.com/Nabil-Carel/composite.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/Nabil-Carel/composite.git'
+                    url = 'https://github.com/Nabil-Carel/composite'
+                }
+            }
         }
+    }
+}
+
+// Provide signingKey and signingPassword as Gradle properties or ORG_GRADLE_PROJECT_* variables.
+signing {
+    def signingKey = findProperty('signingKey')
+    def signingPassword = findProperty('signingPassword')
+
+    if (signingKey) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign publishing.publications.mavenJava
     }
 }

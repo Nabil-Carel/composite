@@ -2,12 +2,24 @@ package io.github.nabilcarel.composite.secured;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
+import java.security.interfaces.RSAPublicKey;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -22,6 +34,10 @@ import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
@@ -39,6 +55,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class SecuredTestApplication {
 
     static final String ALLOWED_ORIGIN = "https://app.example.com";
+    private static final KeyPair JWT_KEYS = generateKeys();
 
     private static final Map<String, List<String>> TOKENS = Map.of(
         "alice-token", List.of("alice", "ROLE_USER"),
@@ -76,6 +93,55 @@ public class SecuredTestApplication {
             .exceptionHandling(errors -> errors
                 .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
             .build();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "test.auth", havingValue = "jwt")
+    SecurityFilterChain jwtChain(HttpSecurity http) throws Exception {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+
+        return http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .anyRequest().authenticated())
+            .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)))
+            .build();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "test.auth", havingValue = "jwt")
+    JwtDecoder jwtDecoder() {
+        return NimbusJwtDecoder.withPublicKey((RSAPublicKey) JWT_KEYS.getPublic()).build();
+    }
+
+    /** Issues a real RS256 token signed by the key this application trusts. */
+    static String issueJwt(String subject, Duration lifetime, String... roles) throws Exception {
+        Instant now = Instant.now();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+            .subject(subject)
+            .issueTime(Date.from(now.minusSeconds(120)))
+            .expirationTime(Date.from(now.plus(lifetime)))
+            .claim("roles", List.of(roles))
+            .build();
+        SignedJWT token = new SignedJWT(new JWSHeader(JWSAlgorithm.RS256), claims);
+        token.sign(new RSASSASigner(JWT_KEYS.getPrivate()));
+        return token.serialize();
+    }
+
+    private static KeyPair generateKeys() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            return generator.generateKeyPair();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Bean
