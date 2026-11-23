@@ -137,6 +137,7 @@ Use these for auditing and logging only. A direct client can send the same heade
 - Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused.
 - Response values are substituted once, so stored data cannot act as a `${...}` reference.
 - Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
+- The caller stays authenticated for the async batch response when the app uses Spring Security's default security context repositories. A custom `SecurityContextRepository` must support async dispatches.
 - Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
 
 ## Installation

@@ -20,6 +20,7 @@ import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -47,6 +48,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.util.ClassUtils;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -56,6 +58,10 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeRequestServiceImpl implements CompositeRequestService{
+
+    private static final boolean SPRING_SECURITY_PRESENT = ClassUtils.isPresent(
+            "org.springframework.security.web.context.RequestAttributeSecurityContextRepository",
+            CompositeRequestServiceImpl.class.getClassLoader());
 
     /** Keeps numbers exact and rejects content after the first JSON value. */
     private static final UnaryOperator<ObjectReader> JSON_RESPONSE_OPTIONS = reader -> reader
@@ -278,7 +284,11 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
 
     @Override
     public CompletableFuture<ResponseEntity<CompositeResponse>> execute(
-            CompositeRequest compositeRequest, HttpServletRequest request) {
+            CompositeRequest compositeRequest, HttpServletRequest request, HttpServletResponse response) {
+        if (SPRING_SECURITY_PRESENT) {
+            AsyncSecurityContextSupport.preserve(request, response);
+        }
+
         List<String> errors = compositeRequestValidator.validateRequest(compositeRequest);
 
         if (!errors.isEmpty()) {
@@ -311,10 +321,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
 
         CompletableFuture<ResponseEntity<CompositeResponse>> result = tracker.getFuture()
                 .orTimeout(properties.getRequestTimeout().toMillis(), TimeUnit.MILLISECONDS)
-                .handle((response, failure) -> {
+                .handle((compositeResponse, failure) -> {
                     batchContext.cancel();
                     responseStore.remove(requestId);
-                    return toResponseEntity(response, failure, tracker, debugInfo);
+                    return toResponseEntity(compositeResponse, failure, tracker, debugInfo);
                 });
 
         try {

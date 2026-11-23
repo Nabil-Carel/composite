@@ -234,7 +234,7 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(false);
         stubSuccessfulExecution();
 
-        var result = service.execute(compositeRequest(), servletRequest).get();
+        var result = service.execute(compositeRequest(), servletRequest, mock(jakarta.servlet.http.HttpServletResponse.class)).get();
 
         assertThat(result.getBody()).isNotNull();
         assertThat(result.getBody().getDebug()).isNull();
@@ -245,7 +245,7 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(true);
         stubSuccessfulExecution();
 
-        var result = service.execute(compositeRequest(), servletRequest).get();
+        var result = service.execute(compositeRequest(), servletRequest, mock(jakarta.servlet.http.HttpServletResponse.class)).get();
 
         assertThat(result.getBody()).isNotNull();
         assertThat(result.getBody().getDebug()).isNotNull();

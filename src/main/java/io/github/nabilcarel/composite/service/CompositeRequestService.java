@@ -6,6 +6,7 @@ import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.springframework.http.ResponseEntity;
@@ -57,12 +58,14 @@ public interface CompositeRequestService {
      *
      * @param compositeRequest the parsed composite request
      * @param request          the current servlet request, read only on the calling thread
-     *                         to capture forwarded headers
+     *                         to capture forwarded headers and the security context
+     * @param response         the current servlet response
      * @return a {@link CompletableFuture} that resolves to a {@link ResponseEntity} wrapping
      *         the {@link CompositeResponse}
      */
     CompletableFuture<ResponseEntity<CompositeResponse>> execute(CompositeRequest compositeRequest,
-                                                                 HttpServletRequest request);
+                                                                 HttpServletRequest request,
+                                                                 HttpServletResponse response);
 
     /**
      * Returns the set of endpoints currently registered for composite execution.

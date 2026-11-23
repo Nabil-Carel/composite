@@ -7,6 +7,7 @@ import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +30,8 @@ class CompositeControllerTest {
     private CompositeRequestService requestService;
     @Mock
     private HttpServletRequest servletRequest;
+    @Mock
+    private HttpServletResponse servletResponse;
 
     private CompositeController controller;
 
@@ -45,15 +48,15 @@ class CompositeControllerTest {
         CompletableFuture<ResponseEntity<CompositeResponse>> future =
                 CompletableFuture.completedFuture(ResponseEntity.ok(compositeResponse));
 
-        when(requestService.execute(compositeRequest, servletRequest)).thenReturn(future);
+        when(requestService.execute(compositeRequest, servletRequest, servletResponse)).thenReturn(future);
 
         DeferredResult<ResponseEntity<CompositeResponse>> result =
-                controller.execute(servletRequest, compositeRequest);
+                controller.execute(servletRequest, servletResponse, compositeRequest);
 
         ResponseEntity<CompositeResponse> response = (ResponseEntity<CompositeResponse>) result.getResult();
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isSameAs(compositeResponse);
-        verify(requestService).execute(compositeRequest, servletRequest);
+        verify(requestService).execute(compositeRequest, servletRequest, servletResponse);
     }
 
     @Test

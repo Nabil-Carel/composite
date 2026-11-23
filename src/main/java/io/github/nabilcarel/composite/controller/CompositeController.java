@@ -6,6 +6,7 @@ import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,20 +74,22 @@ public class CompositeController {
      * effects. The servlet thread is released while the batch runs.
      *
      * @param request     the current servlet request, used to capture forwarded headers
+     * @param response    the current servlet response
      * @param requestBody the composite request
      * @return a {@link DeferredResult} resolving to the composite response
      */
     @PostMapping(value = "/execute", consumes = MediaType.APPLICATION_JSON_VALUE)
     public DeferredResult<ResponseEntity<CompositeResponse>> execute(HttpServletRequest request,
+                                                                     HttpServletResponse response,
                                                                      @RequestBody CompositeRequest requestBody) {
         DeferredResult<ResponseEntity<CompositeResponse>> result = new DeferredResult<>(
                 properties.getRequestTimeout().toMillis() + ASYNC_TIMEOUT_MARGIN_MILLIS);
 
-        requestService.execute(requestBody, request).whenComplete((response, failure) -> {
+        requestService.execute(requestBody, request, response).whenComplete((compositeResponse, failure) -> {
             if (failure != null) {
                 result.setErrorResult(failure);
             } else {
-                result.setResult(response);
+                result.setResult(compositeResponse);
             }
         });
 
