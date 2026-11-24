@@ -28,7 +28,9 @@ public final class ProfileServer {
         PrintStream control = System.out;
 
         try (ConfigurableApplicationContext context = new SpringApplicationBuilder(ProfileApplication.class)
-                .properties("server.port=0", "spring.main.banner-mode=off", "logging.level.root=ERROR")
+                .properties("server.port=0", "spring.main.banner-mode=off", "logging.level.root=ERROR",
+                    "spring.threads.virtual.enabled=" + Boolean.getBoolean("composite.profile.virtualThreads"),
+                    "composite.profile.dispatcher=" + System.getProperty("composite.profile.dispatcher", "webclient"))
                 .run();
              BufferedReader commands = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             control.println("PROFILE PORT " + context.getEnvironment().getProperty("local.server.port"));
@@ -63,7 +65,8 @@ public final class ProfileServer {
     }
 
     private static boolean isServerThread(String name) {
-        return name != null && (name.startsWith("http-nio-") || name.startsWith("reactor-http-"));
+        return name != null && (name.startsWith("http-nio-") || name.startsWith("reactor-http-")
+            || name.startsWith("HttpClient-"));
     }
 
     private static Map<Long, Long> serverAllocations() {

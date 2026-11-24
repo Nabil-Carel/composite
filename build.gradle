@@ -72,6 +72,13 @@ test {
 	useJUnitPlatform()
 }
 
+// Runs every test with Tomcat on virtual threads (Java 21+): -PtestJavaVersion=21 -PvirtualThreads=true
+if (findProperty('virtualThreads') == 'true') {
+    tasks.withType(Test).configureEach {
+        systemProperty 'spring.threads.virtual.enabled', 'true'
+    }
+}
+
 jacocoTestReport {
     dependsOn test
     reports {
@@ -106,7 +113,7 @@ tasks.register('jvmProfile', JavaExec) {
     javaLauncher = javaToolchains.launcherFor(java.toolchain)
     jvmArgs '-Xms512m', '-Xmx512m', '-XX:+UnlockDiagnosticVMOptions', '-XX:+DebugNonSafepoints'
     systemProperty 'composite.profile.output', layout.buildDirectory.dir('reports/jvm-profile').get().asFile.path
-    ['concurrency', 'warmupSeconds', 'measureSeconds'].each { name ->
+    ['concurrency', 'warmupSeconds', 'measureSeconds', 'virtualThreads', 'dispatcher'].each { name ->
         if (project.hasProperty(name)) {
             systemProperty "composite.profile.${name}", project.property(name)
         }
@@ -132,12 +139,19 @@ tasks.register('jcstress', JavaExec) {
     }
 }
 
-// Compiles for Java 17 and optionally runs tests on another JDK: -PtestJavaVersion=21
+// Compiles for Java 17 and optionally runs tests, profiles and stress tests on another JDK: -PtestJavaVersion=21
 if (findProperty('testJavaVersion')) {
+    def testLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(findProperty('testJavaVersion') as int)
+    }
     tasks.withType(Test).configureEach {
-        javaLauncher = javaToolchains.launcherFor {
-            languageVersion = JavaLanguageVersion.of(findProperty('testJavaVersion') as int)
-        }
+        javaLauncher = testLauncher
+    }
+    tasks.named('jvmProfile') {
+        javaLauncher = testLauncher
+    }
+    tasks.named('jcstress') {
+        javaLauncher = testLauncher
     }
 }
 

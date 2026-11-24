@@ -52,6 +52,9 @@ public final class CompositeProfiler {
     private record Load(long batches, long errors, long[] latenciesNanos, Duration elapsed) {
     }
 
+    private static final boolean VIRTUAL_THREADS = Boolean.getBoolean("composite.profile.virtualThreads");
+    private static final String DISPATCHER = System.getProperty("composite.profile.dispatcher", "webclient");
+
     private record Result(int size, Load load, double allocatedKbPerBatch, long gcCount, double gcPauseMillis,
                           double subRequestP99Millis, long batchEvents, long subRequestEvents, long samples,
                           double jacksonPercent, Map<String, Double> cpuBySubsystem,
@@ -70,7 +73,10 @@ public final class CompositeProfiler {
         private ServerProcess() throws IOException {
             String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
             process = new ProcessBuilder(java, "-Xms512m", "-Xmx512m", "-XX:+UnlockDiagnosticVMOptions",
-                "-XX:+DebugNonSafepoints", "-cp", System.getProperty("java.class.path"), ProfileServer.class.getName())
+                "-XX:+DebugNonSafepoints",
+                "-Dcomposite.profile.virtualThreads=" + VIRTUAL_THREADS,
+                "-Dcomposite.profile.dispatcher=" + DISPATCHER,
+                "-cp", System.getProperty("java.class.path"), ProfileServer.class.getName())
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .start();
             commands = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
@@ -206,7 +212,8 @@ public final class CompositeProfiler {
 
     private static boolean isServerThread(RecordedThread thread) {
         String name = thread == null ? null : thread.getJavaName();
-        return name != null && (name.startsWith("http-nio-") || name.startsWith("reactor-http-"));
+        return name != null && (name.startsWith("http-nio-") || name.startsWith("reactor-http-")
+            || name.startsWith("HttpClient-") || name.startsWith("tomcat-handler-"));
     }
 
     private static Result analyze(int size, Load load, long allocated, Path file) throws IOException {
@@ -269,7 +276,9 @@ public final class CompositeProfiler {
             .limit(12)
             .forEach(site -> topSites.put(site.getKey(), percent(site.getValue(), totalWeight)));
 
-        return new Result(size, load, allocated / 1024.0 / Math.max(1, load.batches()), gcCount, gcPauseMillis,
+        // Thread counters cannot see virtual threads, so JFR's sampled estimate is used for them.
+        double allocatedBytes = VIRTUAL_THREADS ? allocationWeight : allocated;
+        return new Result(size, load, allocatedBytes / 1024.0 / Math.max(1, load.batches()), gcCount, gcPauseMillis,
             subRequestP99, batchEvents, subRequestMillis.size(), samples, percent(jacksonSamples, samples),
             percentages(cpu, samples), percentages(allocation, allocationWeight),
             percent(compositeWeight, allocationWeight), topSites);
@@ -341,9 +350,13 @@ public final class CompositeProfiler {
         StringBuilder report = new StringBuilder();
         report.append("# Composite JVM Profile\n\n");
         report.append(String.format(Locale.ROOT,
-            "Java %s, %d CPUs, separate 512 MB server JVM, %d clients, %ds warmup, %ds measured per size.%n%n",
+            "Java %s, %d CPUs, separate 512 MB server JVM, %d clients, %ds warmup, %ds measured per size.%n%n"
+                + "Tomcat threads: %s. Dispatcher: %s.%n%n",
             System.getProperty("java.version"), Runtime.getRuntime().availableProcessors(), concurrency,
-            warmup.toSeconds(), measure.toSeconds()));
+            warmup.toSeconds(), measure.toSeconds(), VIRTUAL_THREADS ? "virtual" : "platform", DISPATCHER));
+        if (VIRTUAL_THREADS) {
+            report.append("Allocation is JFR's sampled estimate, because thread counters cannot see virtual threads.\n\n");
+        }
         report.append("Client and server share this machine. Compare runs on the same computer.\n\n");
         report.append("| Sub-requests | Batches/s | p50 ms | p95 ms | p99 ms | Errors | KB allocated/batch | GCs | GC pause ms | Sub-request p99 ms |\n");
         report.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");

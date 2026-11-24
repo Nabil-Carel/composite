@@ -2,16 +2,89 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: ['**']
   pull_request:
+  schedule:
+    # Nightly run with the longer jcstress mode.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      jcstress-mode:
+        description: 'jcstress mode: quick, default, tough or stress'
+        default: default
+  workflow_call:
+    inputs:
+      jcstress-mode:
+        type: string
+        default: default
 
 permissions:
   contents: read
 
+concurrency:
+  # Pushes to the same branch replace each other; release runs are never cancelled.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+
+env:
+  # setup-java exports these, and Gradle uses them to find the 17 and 21 toolchains.
+  TOOLCHAINS: -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64 -Porg.gradle.java.installations.auto-download=false
+
 jobs:
   test:
-    name: Java ${{ matrix.java }}
+    # Unit, integration, security sample, adversarial and packaged-jar tests, plus Javadoc.
+    name: Tests · ${{ matrix.os }} · Java ${{ matrix.java }}${{ matrix.virtual-threads == 'true' && ' · virtual threads' || '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        java: ['17', '21']
+        virtual-threads: ['false']
+        include:
+          - os: ubuntu-latest
+            java: '21'
+            virtual-threads: 'true'
+          - os: windows-latest
+            java: '21'
+            virtual-threads: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        run: >
+          ./gradlew check javadoc jacocoTestReport --console=plain --continue
+          -PtestJavaVersion=${{ matrix.java }} -PvirtualThreads=${{ matrix.virtual-threads }} $TOOLCHAINS
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.os }}-java-${{ matrix.java }}-vt-${{ matrix.virtual-threads }}
+          path: |
+            build/reports/tests
+            build/reports/jacoco
+            build/test-results
+          if-no-files-found: ignore
+
+  jcstress:
+    # Explores thread interleavings in the scheduler and handler limit.
+    name: Concurrency stress · Java ${{ matrix.java }}
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -23,20 +96,116 @@ jobs:
         with:
           distribution: temurin
           java-version: |
-            ${{ matrix.java }}
             17
+            21
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build and test
-        run: sh ./gradlew check javadoc jacocoTestReport -PtestJavaVersion=${{ matrix.java }} --console=plain
+      - name: Run jcstress
+        run: >
+          ./gradlew jcstress --console=plain
+          -PjcstressMode=${{ github.event_name == 'schedule' && 'tough' || inputs.jcstress-mode || 'default' }}
+          -PtestJavaVersion=${{ matrix.java }} $TOOLCHAINS
 
-      - name: Upload reports
+      - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reports-java-${{ matrix.java }}
-          path: |
-            build/reports/tests
-            build/reports/jacoco
+          name: jcstress-java-${{ matrix.java }}
+          path: build/reports/jcstress
           if-no-files-found: ignore
+
+  profile:
+    # Short profiling run for each thread model and dispatcher. Fails only on request errors,
+    # because shared CI machines are too noisy to gate on latency.
+    name: Profile · ${{ matrix.virtual-threads == 'true' && 'virtual' || 'platform' }} threads · ${{ matrix.dispatcher }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        virtual-threads: ['false', 'true']
+        dispatcher: [webclient, jdk]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run profiler
+        run: >
+          ./gradlew jvmProfile --console=plain -PwarmupSeconds=3 -PmeasureSeconds=5
+          -PvirtualThreads=${{ matrix.virtual-threads }} -Pdispatcher=${{ matrix.dispatcher }}
+          -PtestJavaVersion=21 $TOOLCHAINS
+
+      - name: Fail on request errors
+        run: |
+          python3 - build/reports/jvm-profile/profile.md <<'EOF'
+          import sys
+          lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+          header = next(i for i, line in enumerate(lines) if '| Errors |' in line)
+          rows = [line for line in lines[header + 2:] if line.startswith('|')]
+          rows = rows[:next((i for i, line in enumerate(rows) if not line[1:].strip()[0].isdigit()), len(rows))]
+          errors = sum(int(row.split('|')[6]) for row in rows)
+          print(f'{len(rows)} batch sizes, {errors} errors')
+          sys.exit(1 if errors or not rows else 0)
+          EOF
+          cat build/reports/jvm-profile/profile.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-vt-${{ matrix.virtual-threads }}-${{ matrix.dispatcher }}
+          path: build/reports/jvm-profile/profile.md
+          if-no-files-found: ignore
+
+  package:
+    # Builds the published artifacts and checks what consumers would receive.
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish to the local Maven repository
+        run: ./gradlew publishToMavenLocal --console=plain
+
+      - name: Check artifacts and dependency scopes
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, xml.etree.ElementTree as T
+          base = glob.glob('/home/runner/.m2/repository/io/github/nabil-carel/*/*/')
+          if len(base) != 1:
+              sys.exit(f'expected one published version, found {base}')
+          files = glob.glob(base[0] + '*')
+          for suffix in ('.jar', '-sources.jar', '-javadoc.jar', '.pom', '.module'):
+              if not any(f.endswith(suffix) and (suffix != '.jar' or not f.endswith(('-sources.jar', '-javadoc.jar'))) for f in files):
+                  sys.exit(f'missing {suffix} artifact')
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          pom = T.parse(next(f for f in files if f.endswith('.pom'))).getroot()
+          scopes = {d.findtext('m:artifactId', namespaces=ns): d.findtext('m:scope', namespaces=ns)
+                    for d in pom.findall('m:dependencies/m:dependency', ns)}
+          print(scopes)
+          if scopes.get('spring-boot-starter-webflux') != 'runtime':
+              sys.exit('WebFlux must not be on the consumer compile classpath')
+          EOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: build/libs
