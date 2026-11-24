@@ -248,7 +248,20 @@ With `stopOnFailure`, the first non-2xx sub-response stops the rest of the batch
 - In-flight calls are cancelled and return `503`. Their handlers may have already run, so treat their outcome as unknown.
 - Completed work is **not** rolled back. Use one transactional endpoint when an operation must be all-or-nothing.
 
-### 6. Observe it with Java Flight Recorder
+### 6. Replace an implementation
+
+Every default service can be replaced by declaring a bean of its interface. To change how sub-requests are sent, implement `SubRequestDispatcher`:
+
+```java
+@Bean
+SubRequestDispatcher customDispatcher() {
+    return (request, cancellation) -> sendToThisApplication(request, cancellation);
+}
+```
+
+A dispatcher must only call the current application and must not follow redirects.
+
+### 7. Observe it with Java Flight Recorder
 
 The library emits `io.github.nabilcarel.composite.Batch` and `io.github.nabilcarel.composite.SubRequest` JFR events. They include timing, status, outcome and the route pattern, but never resolved URLs, headers or bodies.
 

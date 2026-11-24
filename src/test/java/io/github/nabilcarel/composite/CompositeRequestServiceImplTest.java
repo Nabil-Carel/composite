@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
+import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
@@ -87,7 +88,7 @@ class CompositeRequestServiceImplTest {
             referenceResolver,
             properties,
             authForwardingService,
-            webClient
+            new WebClientSubRequestDispatcher(webClient)
         );
     }
 

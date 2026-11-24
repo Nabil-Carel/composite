@@ -11,7 +11,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
 import org.springframework.http.server.PathContainer;
 import org.springframework.lang.NonNull;
-import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.condition.PathPatternsRequestCondition;
@@ -38,7 +37,6 @@ import org.springframework.web.util.pattern.PathPattern;
  * @see io.github.nabilcarel.composite.service.CompositeRequestValidator
  * @since 0.0.1
  */
-@Component
 @Slf4j
 @RequiredArgsConstructor
 public class EndpointRegistry implements ApplicationListener<ApplicationReadyEvent> {

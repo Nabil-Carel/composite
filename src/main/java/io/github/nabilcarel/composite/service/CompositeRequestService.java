@@ -2,50 +2,26 @@ package io.github.nabilcarel.composite.service;
 
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
-import io.github.nabilcarel.composite.model.request.SubRequest;
-import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.springframework.http.ResponseEntity;
-import reactor.core.publisher.Mono;
 
 /**
- * Core service responsible for executing a composite request and dispatching individual
- * sub-requests via the loopback {@link org.springframework.web.reactive.function.client.WebClient}.
+ * Core service responsible for executing a composite request.
  *
  * <p>The {@link io.github.nabilcarel.composite.controller.CompositeController controller}
  * calls {@link #execute} with an accepted request. The service validates it, starts the
- * batch, and calls {@link #forwardSubrequest} as each sub-request becomes ready.
+ * batch, and sends each ready sub-request through a
+ * {@link io.github.nabilcarel.composite.dispatch.SubRequestDispatcher}.
  *
  * @see CompositeRequestServiceImpl
  * @see io.github.nabilcarel.composite.controller.CompositeController
  * @since 0.0.1
  */
 public interface CompositeRequestService {
-
-    /**
-     * Resolves placeholders in the sub-request, validates the resolved URL against the
-     * endpoint registry, and dispatches the HTTP call via the loopback WebClient.
-     *
-     * <p>On completion (success or error) the result is deposited into the
-     * {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker}
-     * associated with {@code requestId}, which may in turn unlock dependent sub-requests.
-     *
-     * @param subRequest     the enriched sub-request to dispatch; must not be {@code null}
-     * @param requestId      the UUID identifying the parent composite request; must not be
-     *                       {@code null}
-     * @param context        data captured for this batch on the request thread
-     * @return a {@link Mono}&lt;{@link Void}&gt; that completes when the sub-request has
-     *         been processed (regardless of success or failure)
-     */
-    Mono<Void> forwardSubrequest(
-            SubRequest subRequest,
-            String requestId,
-            SubRequestContext context
-    );
 
     /**
      * Validates and executes an accepted composite request.

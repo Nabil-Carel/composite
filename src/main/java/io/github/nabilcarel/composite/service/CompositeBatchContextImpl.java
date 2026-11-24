@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.service;
 
+import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.SubRequestCoordinator;
 import io.github.nabilcarel.composite.model.request.SubRequest;
@@ -34,7 +35,7 @@ import reactor.core.publisher.Mono;
  *   <li>Checks whether any of the newly-ready sub-requests have failed dependencies; if so,
  *       a synthetic {@code 424 Failed Dependency} response is recorded immediately.</li>
  *   <li>Queues the remaining ready sub-requests and dispatches them via
- *       {@link CompositeRequestService#forwardSubrequest}, never exceeding the batch's
+ *       {@link SubRequestForwarder#forwardSubrequest}, never exceeding the batch's
  *       concurrency limit.</li>
  * </ol>
  *
@@ -46,7 +47,7 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
     private final ResponseTracker tracker;
     private final SubRequestCoordinator coordinator;
     private final Map<String, SubRequest> requestMap;
-    private final CompositeRequestService requestService;
+    private final SubRequestForwarder requestService;
     private final String batchId;
     private final SubRequestContext context;
     private final int maxConcurrentSubRequests;
@@ -61,7 +62,7 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             ResponseTracker tracker,
             SubRequestCoordinator coordinator,
             Map<String, SubRequest> requestMap,
-            CompositeRequestService requestService,
+            SubRequestForwarder requestService,
             String batchId,
             SubRequestContext context,
             int maxConcurrentSubRequests
@@ -73,7 +74,7 @@ public class CompositeBatchContextImpl implements CompositeBatchContext {
             ResponseTracker tracker,
             SubRequestCoordinator coordinator,
             Map<String, SubRequest> requestMap,
-            CompositeRequestService requestService,
+            SubRequestForwarder requestService,
             String batchId,
             SubRequestContext context,
             int maxConcurrentSubRequests,

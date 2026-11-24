@@ -4,7 +4,7 @@ package io.github.nabilcarel.composite.service;
  * Coordinates the execution of a single composite request batch by wiring together the
  * {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker},
  * {@link io.github.nabilcarel.composite.model.SubRequestCoordinator SubRequestCoordinator},
- * and {@link CompositeRequestService}.
+ * and the internal sub-request forwarder.
  *
  * <p>A {@code CompositeBatchContext} is created once per composite request by
  * {@link CompositeRequestService#execute} and bridges the reactive sub-request completion
@@ -23,7 +23,7 @@ public interface CompositeBatchContext {
      * the sub-requests that have no dependencies from the
      * {@link io.github.nabilcarel.composite.model.SubRequestCoordinator SubRequestCoordinator},
      * marks each as {@code IN_PROGRESS}, and dispatches them concurrently via the
-     * {@link CompositeRequestService}.
+     * internal sub-request forwarder.
      */
     void startInitialRequests();
 

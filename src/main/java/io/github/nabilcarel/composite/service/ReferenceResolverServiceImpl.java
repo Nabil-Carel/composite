@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.stereotype.Service;
 
 /**
  * Default {@link ReferenceResolverService} implementation that resolves
@@ -40,7 +39,6 @@ import org.springframework.stereotype.Service;
  * @see ReferenceResolverService
  * @since 0.0.1
  */
-@Service
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 

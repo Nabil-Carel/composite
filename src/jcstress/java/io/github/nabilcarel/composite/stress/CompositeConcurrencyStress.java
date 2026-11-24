@@ -5,23 +5,18 @@ import static org.openjdk.jcstress.annotations.Expect.FORBIDDEN;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
-import io.github.nabilcarel.composite.config.EndpointRegistry;
+import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
 import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
-import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.service.CompositeBatchContextImpl;
-import io.github.nabilcarel.composite.service.CompositeRequestService;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -34,7 +29,6 @@ import org.openjdk.jcstress.annotations.State;
 import org.openjdk.jcstress.infra.results.II_Result;
 import org.openjdk.jcstress.infra.results.I_Result;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
@@ -79,7 +73,7 @@ public final class CompositeConcurrencyStress {
     }
 
     /** Records dispatches and returns a call chosen by the test. */
-    private static final class FakeService implements CompositeRequestService {
+    private static final class FakeService implements SubRequestForwarder {
         private final Map<String, AtomicInteger> calls = new ConcurrentHashMap<>();
         private final AtomicInteger total = new AtomicInteger();
         private final Function<String, Mono<Void>> callFor;
@@ -98,18 +92,6 @@ public final class CompositeConcurrencyStress {
         private int calls(String id) {
             AtomicInteger count = calls.get(id);
             return count == null ? 0 : count.get();
-        }
-
-        @Override
-        public CompletableFuture<ResponseEntity<CompositeResponse>> execute(CompositeRequest compositeRequest,
-                                                                           HttpServletRequest request,
-                                                                           HttpServletResponse response) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Set<EndpointRegistry.EndpointInfo> getAvailableEndpoints() {
-            return Set.of();
         }
     }
 

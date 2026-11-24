@@ -1,12 +1,12 @@
 package io.github.nabilcarel.composite;
 
+import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.SubRequestCoordinator;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.service.CompositeBatchContextImpl;
-import io.github.nabilcarel.composite.service.CompositeRequestService;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,7 +35,7 @@ class CompositeBatchContextImplTest {
     @Mock
     private SubRequestCoordinator coordinator;
     @Mock
-    private CompositeRequestService requestService;
+    private SubRequestForwarder requestService;
 
     private final SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), null);
     private Map<String, SubRequest> requestMap;

@@ -5,9 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.Enumeration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Service;
 
-@Service
 @RequiredArgsConstructor
 public class AuthenticationForwardingServiceImpl implements AuthenticationForwardingService {
     private final CompositeProperties properties;

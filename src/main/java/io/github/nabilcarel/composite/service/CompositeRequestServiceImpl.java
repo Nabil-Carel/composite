@@ -2,6 +2,7 @@ package io.github.nabilcarel.composite.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.cfg.JsonNodeFeature;
@@ -9,7 +10,12 @@ import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
+import io.github.nabilcarel.composite.dispatch.DispatchResult;
+import io.github.nabilcarel.composite.dispatch.PreparedSubRequest;
+import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
+import io.github.nabilcarel.composite.internal.DefaultCancellationSignal;
+import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
 import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
@@ -47,7 +53,6 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -55,18 +60,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Service;
 import org.springframework.util.ClassUtils;
-import org.springframework.web.reactive.function.client.ClientResponse;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
 
-@Service
-@Lazy
 @RequiredArgsConstructor
 @Slf4j
-public class CompositeRequestServiceImpl implements CompositeRequestService{
+public class CompositeRequestServiceImpl implements CompositeRequestService, SubRequestForwarder {
 
     private static final boolean SPRING_SECURITY_PRESENT = ClassUtils.isPresent(
             "org.springframework.security.web.context.RequestAttributeSecurityContextRepository",
@@ -86,10 +86,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
     private final ReferenceResolverService referenceResolver;
     private final CompositeProperties properties;
     private final AuthenticationForwardingService authForwardingService;
-    @Qualifier("compositeWebClient")
-    private final WebClient webClient;
+    private final SubRequestDispatcher dispatcher;
     private volatile ObjectReader jsonResponseReader;
 
+    @Override
     public Mono<Void> forwardSubrequest(
             SubRequest subRequest,
             String requestId,
@@ -166,27 +166,26 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             return Mono.empty();
         }
 
-        WebClient.RequestBodySpec requestBodySpec = webClient.method(HttpMethod.valueOf(subRequest.getMethod().toUpperCase()))
-                .uri(resolvedUrl)
-                .headers(httpHeaders -> {
-                    httpHeaders.addAll(context.forwardedHeaders());
-                    if (subRequest.getResolvedHeaders() != null) {
-                        subRequest.getResolvedHeaders().forEach(httpHeaders::set);
-                    }
-                    httpHeaders.set(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
-
-                    if(properties.getHeaderInjection().isEnabled()){
-                        httpHeaders.add(properties.getHeaderInjection().getRequestHeader(), "true");
-                        httpHeaders.add(properties.getHeaderInjection().getRequestIdHeader(), requestId);
-                        httpHeaders.add(properties.getHeaderInjection().getSubRequestIdHeader(), subRequest.getReferenceId());
-                    }
-                });
-
-        WebClient.RequestHeadersSpec<?> requestSpec = requestBodySpec;
-
-        if (supportsRequestBody(subRequest.getMethod()) && subRequest.getBody() != null && !subRequest.getBody().isEmpty()) {
-            requestSpec = requestBodySpec.bodyValue(subRequest.getBody());
+        HttpHeaders headers = new HttpHeaders();
+        headers.addAll(context.forwardedHeaders());
+        if (subRequest.getResolvedHeaders() != null) {
+            subRequest.getResolvedHeaders().forEach(headers::set);
         }
+        headers.set(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
+
+        if (properties.getHeaderInjection().isEnabled()) {
+            headers.add(properties.getHeaderInjection().getRequestHeader(), "true");
+            headers.add(properties.getHeaderInjection().getRequestIdHeader(), requestId);
+            headers.add(properties.getHeaderInjection().getSubRequestIdHeader(), subRequest.getReferenceId());
+        }
+
+        JsonNode body = supportsRequestBody(subRequest.getMethod())
+                && subRequest.getBody() != null && !subRequest.getBody().isEmpty()
+                ? subRequest.getBody()
+                : null;
+        PreparedSubRequest prepared = new PreparedSubRequest(subRequest.getReferenceId(),
+                HttpMethod.valueOf(subRequest.getMethod().toUpperCase()), resolvedUrl,
+                HttpHeaders.readOnlyHttpHeaders(headers), body);
 
         // Apply per-subrequest timeout if configured, otherwise use default
         Duration timeout = properties.getSubRequestTimeout() != null
@@ -197,8 +196,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         AtomicInteger recordedStatus = new AtomicInteger();
         String endpoint = resolvedEndpointInfo.get().getPattern();
 
-        return requestSpec
-                .exchangeToMono(response -> toSubResponse(response, subRequest.getReferenceId()))
+        return dispatch(prepared)
+                .map(result -> toSubResponse(result, subRequest.getReferenceId()))
                 .timeout(timeout)
                 .doOnSubscribe(subscription -> event.begin())
                 .doOnSuccess(subResponse -> {
@@ -256,47 +255,58 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         return !method.equalsIgnoreCase("GET") && !method.equalsIgnoreCase("HEAD");
     }
 
-    private Mono<SubResponse> toSubResponse(ClientResponse response, String referenceId) {
-        HttpStatusCode status = response.statusCode();
-        SubResponse emptyResponse = SubResponse.builder()
+    /** Adapts the public dispatcher contract to the internal scheduler. */
+    private Mono<DispatchResult> dispatch(PreparedSubRequest request) {
+        return Mono.create(sink -> {
+            DefaultCancellationSignal cancellation = new DefaultCancellationSignal();
+            sink.onCancel(cancellation::cancel);
+
+            try {
+                dispatcher.dispatch(request, cancellation).whenComplete((result, failure) -> {
+                    if (failure != null) {
+                        sink.error(failure);
+                    } else {
+                        sink.success(result);
+                    }
+                });
+            } catch (RuntimeException e) {
+                sink.error(e);
+            }
+        });
+    }
+
+    private SubResponse toSubResponse(DispatchResult result, String referenceId) {
+        HttpStatusCode status = HttpStatusCode.valueOf(result.status());
+        var builder = SubResponse.builder()
                 .referenceId(referenceId)
-                .httpStatus(status.value())
-                .build();
+                .httpStatus(status.value());
 
         if (status.is2xxSuccessful()) {
-            return response.bodyToMono(String.class)
-                    .map(text -> successResponse(response, referenceId, text))
-                    .defaultIfEmpty(emptyResponse);
+            return successResponse(result, referenceId);
         }
 
         if (status.isError()) {
-            return response.bodyToMono(String.class)
-                    .defaultIfEmpty("")
-                    .map(errorBody -> {
-                        log.error("Error from subrequest: {} - {}", status, errorBody);
-                        return SubResponse.builder()
-                                .referenceId(referenceId)
-                                .httpStatus(status.value())
-                                .body(errorBody)
-                                .build();
-                    });
+            String errorBody = result.body() == null ? "" : result.body();
+            log.error("Error from subrequest: {} - {}", status, errorBody);
+            return builder.body(errorBody).build();
         }
 
         // 1xx informational or 3xx redirect
         log.warn("Received non-standard response status: {}", status);
-        return response.releaseBody().thenReturn(emptyResponse);
+        return builder.build();
     }
 
-    private SubResponse successResponse(ClientResponse response, String referenceId, String text) {
-        SubResponse.SubResponseBuilder builder = SubResponse.builder()
+    private SubResponse successResponse(DispatchResult result, String referenceId) {
+        var builder = SubResponse.builder()
                 .referenceId(referenceId)
-                .httpStatus(response.statusCode().value());
+                .httpStatus(result.status());
+        String text = result.body();
 
-        if (text.isBlank()) {
+        if (text == null || text.isBlank()) {
             return builder.build();
         }
 
-        if (!isJson(response.headers().contentType().orElse(null))) {
+        if (!isJson(result.contentType())) {
             return builder.body(text).build();
         }
 

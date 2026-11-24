@@ -6,10 +6,13 @@ import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.controller.CompositeController;
+import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
+import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
 import io.netty.channel.ChannelOption;
 import jakarta.annotation.PreDestroy;
+import jakarta.validation.Validator;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
@@ -22,11 +25,17 @@ import javax.net.ssl.SSLException;
 import org.springframework.core.env.Environment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
+import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
+import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,6 +46,7 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.springframework.web.util.DefaultUriBuilderFactory;
 import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriBuilderFactory;
@@ -57,10 +67,10 @@ import reactor.netty.resources.ConnectionProvider;
  *   <li>{@link com.fasterxml.jackson.databind.ObjectMapper compositeObjectMapper} — the
  *       {@code ObjectMapper} used for serialising/deserialising composite payloads.
  *       Customise by declaring a bean named {@code compositeObjectMapper}.</li>
- *   <li>{@link org.springframework.web.reactive.function.client.WebClient compositeWebClient}
- *       — the reactive WebClient used for loopback sub-requests, configured from
- *       {@link CompositeLoopbackProperties}. Customise by declaring a bean named
- *       {@code compositeWebClient}.</li>
+ *   <li>{@link SubRequestDispatcher} — sends loopback sub-requests. Declare your own bean to
+ *       replace the default HTTP client.</li>
+ *   <li>The validator, reference resolver, credential forwarding service and composite
+ *       service, each replaceable by declaring a bean of its interface type.</li>
  *   <li>A {@link java.util.concurrent.ConcurrentMap} keyed by request ID, acting as the
  *       in-flight
  *       {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker}
@@ -77,19 +87,16 @@ import reactor.netty.resources.ConnectionProvider;
  * @see CompositeLoopbackProperties
  * @since 0.0.1
  */
-@Configuration
+@AutoConfiguration(after = {
+        JacksonAutoConfiguration.class,
+        ValidationAutoConfiguration.class,
+        WebMvcAutoConfiguration.class
+})
 @RequiredArgsConstructor
-@ConditionalOnWebApplication
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties({CompositeLoopbackProperties.class, CompositeProperties.class})
 @Slf4j
-@Import({
-        CompositeController.class,
-        EndpointRegistry.class,
-        AuthenticationForwardingServiceImpl.class,
-        CompositeRequestServiceImpl.class,
-        CompositeRequestValidatorImpl.class,
-        ReferenceResolverServiceImpl.class
-})
+@Import(CompositeController.class)
 public class CompositeAutoConfiguration implements ApplicationListener<ServletWebServerInitializedEvent> {
     private final CompositeProperties properties;
     private final Environment environment;
@@ -161,9 +168,105 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      *
      * @return a new {@link ConcurrentHashMap}
      */
-    @Bean
+    @Bean("compositeResponseStore")
     public ConcurrentMap<String, ResponseTracker> responseStore(){
         return new ConcurrentHashMap<>();
+    }
+
+    /**
+     * Discovers the endpoints available to composite requests.
+     *
+     * @param context the application context
+     * @param handlerMapping Spring MVC's request mapping
+     * @return the endpoint registry
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public EndpointRegistry compositeEndpointRegistry(
+            ApplicationContext context,
+            @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping) {
+        return new EndpointRegistry(context, handlerMapping);
+    }
+
+    /**
+     * Copies configured credentials from the outer request.
+     *
+     * @return the default forwarding service
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AuthenticationForwardingService compositeAuthenticationForwardingService() {
+        return new AuthenticationForwardingServiceImpl(properties);
+    }
+
+    /**
+     * Validates composite requests.
+     *
+     * @param validator the Bean Validation validator
+     * @param endpointRegistry the endpoint registry
+     * @return the default validator
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public CompositeRequestValidator compositeRequestValidator(Validator validator,
+                                                               EndpointRegistry endpointRegistry) {
+        return new CompositeRequestValidatorImpl(validator, endpointRegistry, properties);
+    }
+
+    /**
+     * Resolves references between sub-requests.
+     *
+     * @param responseStore in-flight responses
+     * @param objectMapper the composite object mapper
+     * @return the default resolver
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ReferenceResolverService compositeReferenceResolver(
+            ConcurrentMap<String, ResponseTracker> responseStore,
+            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
+        return new ReferenceResolverServiceImpl(responseStore, objectMapper, properties);
+    }
+
+    /**
+     * Sends sub-requests through the loopback client.
+     *
+     * @param webClient the lazily created loopback client
+     * @return the default dispatcher
+     */
+    @Bean
+    @Lazy
+    @ConditionalOnMissingBean
+    public SubRequestDispatcher compositeSubRequestDispatcher(
+            @Lazy @Qualifier("compositeWebClient") WebClient webClient) {
+        return new WebClientSubRequestDispatcher(webClient);
+    }
+
+    /**
+     * Executes composite requests.
+     *
+     * @param endpointRegistry the endpoint registry
+     * @param objectMapper the composite object mapper
+     * @param responseStore in-flight responses
+     * @param validator the request validator
+     * @param referenceResolver the reference resolver
+     * @param authenticationForwardingService the credential forwarding service
+     * @param dispatcher the sub-request dispatcher
+     * @return the default service
+     */
+    @Bean
+    @Lazy
+    @ConditionalOnMissingBean
+    public CompositeRequestService compositeRequestService(
+            EndpointRegistry endpointRegistry,
+            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper,
+            ConcurrentMap<String, ResponseTracker> responseStore,
+            CompositeRequestValidator validator,
+            ReferenceResolverService referenceResolver,
+            AuthenticationForwardingService authenticationForwardingService,
+            @Lazy SubRequestDispatcher dispatcher) {
+        return new CompositeRequestServiceImpl(endpointRegistry, objectMapper, responseStore, validator,
+                referenceResolver, properties, authenticationForwardingService, dispatcher);
     }
 
     /**
@@ -190,8 +293,8 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * port will have been captured via
      * {@link #onApplicationEvent(ServletWebServerInitializedEvent)}.
      *
-     * <p>Override by declaring a bean named {@code compositeWebClient} in your application
-     * context.
+     * <p>This client is an implementation detail. Declare a {@link SubRequestDispatcher} bean
+     * to replace how sub-requests are sent.
      *
      * @param loopbackProperties loopback configuration (protocol, timeouts, SSL)
      * @return a configured {@link WebClient} targeting the application's local URL, including
