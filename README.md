@@ -248,6 +248,14 @@ With `stopOnFailure`, the first non-2xx sub-response stops the rest of the batch
 - In-flight calls are cancelled and return `503`. Their handlers may have already run, so treat their outcome as unknown.
 - Completed work is **not** rolled back. Use one transactional endpoint when an operation must be all-or-nothing.
 
+### 6. Observe it with Java Flight Recorder
+
+The library emits `io.github.nabilcarel.composite.Batch` and `io.github.nabilcarel.composite.SubRequest` JFR events. They include timing, status, outcome and the route pattern, but never resolved URLs, headers or bodies.
+
+```bash
+java -XX:StartFlightRecording=filename=composite.jfr,settings=profile -jar your-app.jar
+```
+
 ## How It Works
 
 The Composite Endpoint Library acts as an intelligent request orchestrator that coordinates multiple HTTP calls to your existing endpoints.

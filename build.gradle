@@ -85,6 +85,22 @@ tasks.named('check') {
     dependsOn packagedJarTest
 }
 
+// Measures latency, allocation, GC and CPU by subsystem: ./gradlew jvmProfile
+tasks.register('jvmProfile', JavaExec) {
+    description = 'Profiles composite batches with Java Flight Recorder and writes a report.'
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.nabilcarel.composite.profile.CompositeProfiler'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    jvmArgs '-Xms512m', '-Xmx512m', '-XX:+UnlockDiagnosticVMOptions', '-XX:+DebugNonSafepoints'
+    systemProperty 'composite.profile.output', layout.buildDirectory.dir('reports/jvm-profile').get().asFile.path
+    ['concurrency', 'warmupSeconds', 'measureSeconds'].each { name ->
+        if (project.hasProperty(name)) {
+            systemProperty "composite.profile.${name}", project.property(name)
+        }
+    }
+}
+
 // Compiles for Java 17 and optionally runs tests on another JDK: -PtestJavaVersion=21
 if (findProperty('testJavaVersion')) {
     tasks.withType(Test).configureEach {

@@ -20,6 +20,8 @@ import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
+import io.github.nabilcarel.composite.observability.CompositeBatchEvent;
+import io.github.nabilcarel.composite.observability.CompositeSubRequestEvent;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -37,6 +39,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +60,7 @@ import org.springframework.util.ClassUtils;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
 @Service
 @Lazy
@@ -186,10 +192,18 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             ? properties.getSubRequestTimeout()
             : properties.getRequestTimeout();
 
+        CompositeSubRequestEvent event = new CompositeSubRequestEvent();
+        AtomicInteger recordedStatus = new AtomicInteger();
+        String endpoint = resolvedEndpointInfo.get().getPattern();
+
         return requestSpec
                 .exchangeToMono(response -> toSubResponse(response, subRequest.getReferenceId()))
                 .timeout(timeout)
+                .doOnSubscribe(subscription -> event.begin())
                 .doOnSuccess(subResponse -> {
+                    if (subResponse != null) {
+                        recordedStatus.set(subResponse.getHttpStatus());
+                    }
                     ResponseTracker tracker = responseStore.get(requestId);
                     if (tracker != null) {
                         tracker.addResponse(subRequest.getReferenceId(), subResponse);
@@ -200,11 +214,16 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                 })
                 .onErrorResume(throwable -> {
                     log.error("Error forwarding subrequest {}: {}", subRequest.getReferenceId(), throwable.getMessage(), throwable);
+                    recordedStatus.set(HttpStatus.SERVICE_UNAVAILABLE.value());
                     addErrorToTracker(requestId, subRequest.getReferenceId(),
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
                             "Error executing subrequest: " + transportFailureMessage(throwable));
                     return Mono.empty();
                 })
+                // Finishing the batch disposes the last call too, so only a call without a result was cancelled.
+                .doFinally(signal -> event.finish(requestId, subRequest.getReferenceId(),
+                        subRequest.getMethod().toUpperCase(), endpoint, recordedStatus.get(),
+                        signal == SignalType.CANCEL && recordedStatus.get() == 0))
                 .then();
     }
 
@@ -325,6 +344,9 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                     CompositeResponse.builder().hasErrors(true).errors(errors).build()));
         }
 
+        CompositeBatchEvent batchEvent = new CompositeBatchEvent();
+        batchEvent.begin();
+
         String requestId = UUID.randomUUID().toString();
         Map<String, SubRequest> requestMap = compositeRequest.getSubRequests().stream()
                 .collect(Collectors.toMap(SubRequestDto::getReferenceId, SubRequest::new));
@@ -354,10 +376,21 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
             responseStore.remove(requestId);
         };
 
+        AtomicBoolean batchRecorded = new AtomicBoolean();
+        Consumer<String> recordBatch = outcome -> {
+            if (batchRecorded.compareAndSet(false, true)) {
+                int failed = (int) tracker.getSubResponseMap().values().stream()
+                        .filter(subResponse -> subResponse.getHttpStatus() < 200 || subResponse.getHttpStatus() >= 300)
+                        .count();
+                batchEvent.finish(requestId, requestMap.size(), failed, compositeRequest.isStopOnFailure(), outcome);
+            }
+        };
+
         CompletableFuture<ResponseEntity<CompositeResponse>> result = tracker.getFuture()
                 .orTimeout(properties.getRequestTimeout().toMillis(), TimeUnit.MILLISECONDS)
                 .handle((compositeResponse, failure) -> {
                     cleanup.run();
+                    recordBatch.accept(batchOutcome(compositeResponse, failure));
                     return toResponseEntity(compositeResponse, failure, tracker, debugInfo);
                 });
 
@@ -365,6 +398,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         result.whenComplete((ignored, failure) -> {
             if (failure instanceof CancellationException) {
                 cleanup.run();
+                recordBatch.accept("CANCELLED");
                 tracker.cancel(failure);
             }
         });
@@ -376,6 +410,20 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         }
 
         return result;
+    }
+
+    private static String batchOutcome(CompositeResponse response, Throwable failure) {
+        if (failure == null) {
+            return response.isHasErrors() ? "PARTIAL" : "SUCCESS";
+        }
+
+        Throwable cause = failure instanceof CompletionException && failure.getCause() != null
+                ? failure.getCause()
+                : failure;
+        if (cause instanceof TimeoutException) {
+            return "TIMEOUT";
+        }
+        return cause instanceof CancellationException ? "CANCELLED" : "ERROR";
     }
 
     private ResponseEntity<CompositeResponse> toResponseEntity(CompositeResponse response, Throwable failure,
