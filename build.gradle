@@ -49,7 +49,9 @@ dependencies {
 
 	api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'io.projectreactor:reactor-core'
+    // Optional: only needed for composite.loopback.client=webclient.
+    compileOnly 'org.springframework.boot:spring-boot-starter-webflux'
 
 
     compileOnly 'org.projectlombok:lombok'
@@ -59,6 +61,7 @@ dependencies {
     annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webflux'
     testImplementation 'org.springframework.boot:spring-boot-actuator'
     testImplementation 'org.springframework.boot:spring-boot-starter-security'
     testImplementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
@@ -70,6 +73,13 @@ jacoco {
 
 test {
 	useJUnitPlatform()
+}
+
+// Runs every test with the WebClient loopback client: -PloopbackClient=webclient
+if (findProperty('loopbackClient')) {
+    tasks.withType(Test).configureEach {
+        systemProperty 'composite.loopback.client', findProperty('loopbackClient')
+    }
 }
 
 // Runs every test with Tomcat on virtual threads (Java 21+): -PtestJavaVersion=21 -PvirtualThreads=true

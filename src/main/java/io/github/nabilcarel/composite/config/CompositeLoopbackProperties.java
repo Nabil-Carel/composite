@@ -9,11 +9,11 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Configuration properties for the Reactor Netty {@link org.springframework.web.reactive.function.client.WebClient}
- * used to dispatch loopback sub-requests back to the same application instance.
+ * Configuration properties for the HTTP client that sends loopback sub-requests back to the
+ * same application instance.
  *
- * <p>Properties are bound to the {@code composite.loopback} prefix. The loopback
- * {@code WebClient} is created lazily on first use by
+ * <p>Properties are bound to the {@code composite.loopback} prefix. The client is created
+ * lazily on first use by
  * {@link io.github.nabilcarel.composite.autoconfigure.CompositeAutoConfiguration}.
  *
  * <h2>HTTPS configuration</h2>
@@ -40,6 +40,23 @@ import org.springframework.validation.annotation.Validated;
 @Getter
 @Setter
 public final class CompositeLoopbackProperties {
+
+    /** HTTP clients available for loopback calls. */
+    public enum Client {
+        /** The non-blocking JDK {@code java.net.http.HttpClient}. Needs no extra dependency. */
+        JDK,
+        /** Reactor Netty's {@code WebClient}. Requires {@code spring-boot-starter-webflux}. */
+        WEBCLIENT
+    }
+
+    /**
+     * HTTP client used for loopback calls.
+     *
+     * <p>Both clients are non-blocking. Defaults to {@code jdk}, which needs no extra
+     * dependency. A {@link io.github.nabilcarel.composite.dispatch.SubRequestDispatcher} bean
+     * replaces either one.
+     */
+    private Client client = Client.JDK;
 
     /**
      * TCP connection timeout for each loopback call.

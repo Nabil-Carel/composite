@@ -33,7 +33,7 @@ env:
 jobs:
   test:
     # Unit, integration, security sample, adversarial and packaged-jar tests, plus Javadoc.
-    name: Tests · ${{ matrix.os }} · Java ${{ matrix.java }}${{ matrix.virtual-threads == 'true' && ' · virtual threads' || '' }}
+    name: Tests · ${{ matrix.os }} · Java ${{ matrix.java }}${{ matrix.virtual-threads == 'true' && ' · virtual threads' || '' }}${{ matrix.client == 'webclient' && ' · WebClient' || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -42,13 +42,24 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         java: ['17', '21']
         virtual-threads: ['false']
+        client: [jdk]
         include:
           - os: ubuntu-latest
             java: '21'
             virtual-threads: 'true'
+            client: jdk
           - os: windows-latest
             java: '21'
             virtual-threads: 'true'
+            client: jdk
+          - os: ubuntu-latest
+            java: '17'
+            virtual-threads: 'false'
+            client: webclient
+          - os: ubuntu-latest
+            java: '21'
+            virtual-threads: 'true'
+            client: webclient
     defaults:
       run:
         shell: bash
@@ -67,13 +78,14 @@ jobs:
       - name: Build and test
         run: >
           ./gradlew check javadoc jacocoTestReport --console=plain --continue
-          -PtestJavaVersion=${{ matrix.java }} -PvirtualThreads=${{ matrix.virtual-threads }} $TOOLCHAINS
+          -PtestJavaVersion=${{ matrix.java }} -PvirtualThreads=${{ matrix.virtual-threads }}
+          -PloopbackClient=${{ matrix.client }} $TOOLCHAINS
 
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tests-${{ matrix.os }}-java-${{ matrix.java }}-vt-${{ matrix.virtual-threads }}
+          name: tests-${{ matrix.os }}-java-${{ matrix.java }}-vt-${{ matrix.virtual-threads }}-${{ matrix.client }}
           path: |
             build/reports/tests
             build/reports/jacoco
@@ -200,8 +212,10 @@ jobs:
           scopes = {d.findtext('m:artifactId', namespaces=ns): d.findtext('m:scope', namespaces=ns)
                     for d in pom.findall('m:dependencies/m:dependency', ns)}
           print(scopes)
-          if scopes.get('spring-boot-starter-webflux') != 'runtime':
-              sys.exit('WebFlux must not be on the consumer compile classpath')
+          if 'spring-boot-starter-webflux' in scopes:
+              sys.exit('WebFlux must stay optional for consumers')
+          if scopes.get('reactor-core') != 'runtime':
+              sys.exit('reactor-core must be a runtime dependency')
           EOF
 
       - name: Upload artifacts

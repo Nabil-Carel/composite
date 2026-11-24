@@ -11,19 +11,15 @@ import io.github.nabilcarel.composite.internal.ActiveBatches;
 import io.github.nabilcarel.composite.internal.CompositeRequestBodyExceptionResolver;
 import io.github.nabilcarel.composite.internal.CompositeRequestSizeAdvice;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
-import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
+import io.github.nabilcarel.composite.internal.JdkHttpSubRequestDispatcher;
+import io.github.nabilcarel.composite.internal.LoopbackAddress;
 import io.github.nabilcarel.composite.service.*;
-import io.netty.channel.ChannelOption;
-import jakarta.annotation.PreDestroy;
 import jakarta.validation.Validator;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
-import java.net.URI;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Supplier;
-import javax.net.ssl.SSLException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.SSLContext;
 import org.springframework.core.env.Environment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +27,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
@@ -43,18 +41,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.util.unit.DataSize;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
-import org.springframework.web.util.DefaultUriBuilderFactory;
-import org.springframework.web.util.UriBuilder;
-import org.springframework.web.util.UriBuilderFactory;
-import reactor.netty.http.client.HttpClient;
-import reactor.netty.resources.ConnectionProvider;
 
 /**
  * Spring Boot auto-configuration for the Composite library.
@@ -70,17 +60,19 @@ import reactor.netty.resources.ConnectionProvider;
  *   <li>{@link com.fasterxml.jackson.databind.ObjectMapper compositeObjectMapper} — the
  *       {@code ObjectMapper} used for serialising/deserialising composite payloads.
  *       Customise by declaring a bean named {@code compositeObjectMapper}.</li>
- *   <li>{@link SubRequestDispatcher} — sends loopback sub-requests. Declare your own bean to
- *       replace the default HTTP client.</li>
+ *   <li>{@link SubRequestDispatcher} — sends loopback sub-requests with the non-blocking JDK
+ *       HTTP client, or with WebClient when {@code composite.loopback.client=webclient}.
+ *       Declare your own bean to replace it.</li>
  *   <li>The validator, reference resolver, credential forwarding service and composite
  *       service, each replaceable by declaring a bean of its interface type.</li>
  *   <li>A {@link org.springframework.web.servlet.config.annotation.WebMvcConfigurer} that
  *       registers the {@link CompositeDispatchInterceptor}.</li>
  * </ul>
  *
- * <p>The {@code compositeWebClient} bean is created lazily and resolves the loopback port
- * from the {@link org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent
- * ServletWebServerInitializedEvent}.
+ * <p>The dispatcher is created lazily and reads the loopback port from the
+ * {@link org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent
+ * ServletWebServerInitializedEvent}. WebFlux is optional and only needed for the WebClient
+ * option.
  *
  * @see CompositeProperties
  * @see CompositeLoopbackProperties
@@ -95,21 +87,10 @@ import reactor.netty.resources.ConnectionProvider;
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties({CompositeLoopbackProperties.class, CompositeProperties.class})
 @Slf4j
-@Import(CompositeController.class)
+@Import({CompositeController.class, WebClientLoopbackConfiguration.class})
 public class CompositeAutoConfiguration implements ApplicationListener<ServletWebServerInitializedEvent> {
     private final CompositeProperties properties;
     private final Environment environment;
-    private volatile int serverPort;
-    private volatile ConnectionProvider connectionProvider;
-
-    /** Releases loopback connections when the application context closes. */
-    @PreDestroy
-    void closeConnectionProvider() {
-        if (connectionProvider != null) {
-            connectionProvider.dispose();
-        }
-    }
-
 
     /**
      * Provides the {@link ObjectMapper} used by the composite library for JSON
@@ -141,7 +122,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
             CompositeLoopbackProperties loopbackProperties,
             DispatchMarker marker,
             @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
-        int maxConcurrentHandlers = effectiveMaxConnections(loopbackProperties);
+        int maxConcurrentHandlers = LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties);
 
         return new WebMvcConfigurer() {
             @Override
@@ -174,21 +155,6 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     @Bean
     public CompositeRequestSizeAdvice compositeRequestSizeAdvice() {
         return new CompositeRequestSizeAdvice(properties);
-    }
-
-    private int effectiveMaxConnections(CompositeLoopbackProperties loopbackProperties) {
-        Integer configuredThreads = environment.getProperty("server.tomcat.threads.max", Integer.class, 200);
-        int serverThreads = configuredThreads == null ? 200 : configuredThreads;
-
-        if (loopbackProperties.getMaxConnections() == null) {
-            return Math.max(1, serverThreads / 2);
-        }
-
-        if (loopbackProperties.getMaxConnections() >= serverThreads) {
-            log.warn("composite.loopback.max-connections ({}) leaves no Tomcat threads for normal traffic ({})",
-                    loopbackProperties.getMaxConnections(), serverThreads);
-        }
-        return loopbackProperties.getMaxConnections();
     }
 
     /**
@@ -255,17 +221,57 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Sends sub-requests through the loopback client.
+     * Provides the application's own base URL for loopback calls.
      *
-     * @param webClient the lazily created loopback client
+     * @param loopbackProperties loopback configuration
+     * @return the loopback address
+     */
+    @Bean
+    public LoopbackAddress compositeLoopbackAddress(CompositeLoopbackProperties loopbackProperties) {
+        return new LoopbackAddress(loopbackProperties.getProtocol(), environment);
+    }
+
+    /**
+     * Sends sub-requests with the non-blocking JDK HTTP client, the default
+     * {@code composite.loopback.client}.
+     *
+     * @param loopbackProperties loopback configuration (protocol, timeouts, SSL, limits)
+     * @param address the application's base URL
+     * @param objectMapper serialises request bodies
      * @return the default dispatcher
      */
     @Bean
     @Lazy
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "composite.loopback", name = "client", havingValue = "jdk", matchIfMissing = true)
     public SubRequestDispatcher compositeSubRequestDispatcher(
-            @Lazy @Qualifier("compositeWebClient") WebClient webClient) {
-        return new WebClientSubRequestDispatcher(webClient);
+            CompositeLoopbackProperties loopbackProperties,
+            LoopbackAddress address,
+            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
+        int maxResponseSize = LoopbackSupport.toBufferLimit(loopbackProperties.getMaxResponseSize());
+        SSLContext sslContext = null;
+
+        if (LoopbackSupport.isHttps(loopbackProperties)) {
+            LoopbackSupport.logHttpsSetup(environment, loopbackProperties);
+            if (loopbackProperties.isTrustSelfSignedCertificates()) {
+                sslContext = LoopbackSupport.trustAllSslContext();
+            }
+        }
+
+        return new JdkHttpSubRequestDispatcher(address::baseUrl, objectMapper, loopbackExecutor(),
+                loopbackProperties.getConnectTimeout(), loopbackProperties.getResponseTimeout(), maxResponseSize,
+                LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties), sslContext);
+    }
+
+    /** Completes responses. The work never blocks, so a few threads serve every call. */
+    private static ExecutorService loopbackExecutor() {
+        AtomicInteger count = new AtomicInteger();
+        int threads = Math.max(2, Math.min(Runtime.getRuntime().availableProcessors(), 8));
+        return Executors.newFixedThreadPool(threads, runnable -> {
+            Thread thread = new Thread(runnable, "composite-http-" + count.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     /**
@@ -298,68 +304,20 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Captures the server port once the embedded web server has started so that the lazily
-     * created {@link #loopbackWebClient} can construct the correct base URL.
+     * Logs the port and warns when debug mode is enabled.
      *
      * {@inheritDoc}
      */
     @Override
     public void onApplicationEvent(ServletWebServerInitializedEvent event) {
-        this.serverPort = event.getWebServer().getPort();
+        if (event.getApplicationContext().getServerNamespace() != null) {
+            return;
+        }
+        int serverPort = event.getWebServer().getPort();
         log.info("Composite endpoint library initialized on port {}", serverPort);
         if (properties.isDebugEnabled()) {
             log.warn("Composite debug mode is enabled. Disable in production.");
         }
-    }
-
-    /**
-     * Provides the loopback {@link WebClient} used to dispatch sub-requests back to the
-     * same application instance.
-     *
-     * <p>The bean is {@link org.springframework.context.annotation.Lazy @Lazy} so that it
-     * is not created until the first composite request arrives — by which point the server
-     * port will have been captured via
-     * {@link #onApplicationEvent(ServletWebServerInitializedEvent)}.
-     *
-     * <p>This client is an implementation detail. Declare a {@link SubRequestDispatcher} bean
-     * to replace how sub-requests are sent.
-     *
-     * @param loopbackProperties loopback configuration (protocol, timeouts, SSL)
-     * @return a configured {@link WebClient} targeting the application's local URL, including
-     *         its context path and Spring MVC servlet path
-     */
-    @Bean("compositeWebClient")
-    @Lazy
-    @ConditionalOnMissingBean(name = "compositeWebClient")
-    public WebClient loopbackWebClient(CompositeLoopbackProperties loopbackProperties) {
-        int maxResponseSize = toBufferLimit(loopbackProperties.getMaxResponseSize());
-        String protocol = loopbackProperties.getProtocol();
-
-        connectionProvider = ConnectionProvider.builder("composite-loopback")
-                .maxConnections(effectiveMaxConnections(loopbackProperties))
-                .pendingAcquireMaxCount(-1)
-                .pendingAcquireTimeout(properties.getRequestTimeout())
-                .build();
-
-        HttpClient httpClient = HttpClient.create(connectionProvider)
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis());
-
-        if (loopbackProperties.getResponseTimeout() != null) {
-            httpClient = httpClient.responseTimeout(loopbackProperties.getResponseTimeout());
-        }
-
-        if ("https".equalsIgnoreCase(protocol)) {
-            httpClient = configureHttpsClient(httpClient, loopbackProperties);
-        }
-
-        // A custom controller can create this client before the server has chosen its port.
-        UriBuilderFactory uriBuilderFactory = new LoopbackUriBuilderFactory(() -> loopbackBaseUrl(protocol));
-
-        return WebClient.builder()
-                .uriBuilderFactory(uriBuilderFactory)
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(maxResponseSize))
-                .build();
     }
 
     /**
@@ -379,121 +337,22 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         }
     }
 
-    private String loopbackBaseUrl(String protocol) {
-        if (serverPort <= 0) {
-            throw new IllegalStateException("Composite loopback used before the web server started");
-        }
-
-        String baseUrl = String.format("%s://localhost:%d%s%s", protocol, serverPort,
-                normalizePathPrefix(environment.getProperty("server.servlet.context-path")),
-                normalizePathPrefix(environment.getProperty("spring.mvc.servlet.path")));
-        log.info("Composite loopback base URL: {}", baseUrl);
-        return baseUrl;
-    }
-
     /**
-     * Resolves the loopback base URL on first use. Sub-request URLs are already encoded by
-     * {@code SubRequestTarget}, so they are not encoded again.
+     * Fails at startup when the WebClient was requested but WebFlux is missing.
+     *
+     * @since 0.1.0
      */
-    private static final class LoopbackUriBuilderFactory implements UriBuilderFactory {
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnMissingClass("org.springframework.web.reactive.function.client.WebClient")
+    @ConditionalOnProperty(prefix = "composite.loopback", name = "client", havingValue = "webclient")
+    static class WebClientUnavailableConfiguration {
 
-        private final Supplier<String> baseUrl;
-        private volatile DefaultUriBuilderFactory delegate;
-
-        private LoopbackUriBuilderFactory(Supplier<String> baseUrl) {
-            this.baseUrl = baseUrl;
-        }
-
-        private DefaultUriBuilderFactory delegate() {
-            DefaultUriBuilderFactory current = delegate;
-            if (current == null) {
-                current = new DefaultUriBuilderFactory(baseUrl.get());
-                current.setEncodingMode(DefaultUriBuilderFactory.EncodingMode.NONE);
-                delegate = current;
-            }
-            return current;
-        }
-
-        @Override
-        public UriBuilder uriString(String uriTemplate) {
-            return delegate().uriString(uriTemplate);
-        }
-
-        @Override
-        public UriBuilder builder() {
-            return delegate().builder();
-        }
-
-        @Override
-        public URI expand(String uriTemplate, Map<String, ?> uriVariables) {
-            return delegate().expand(uriTemplate, uriVariables);
-        }
-
-        @Override
-        public URI expand(String uriTemplate, Object... uriVariables) {
-            return delegate().expand(uriTemplate, uriVariables);
+        @Bean
+        @ConditionalOnMissingBean
+        SubRequestDispatcher compositeSubRequestDispatcher() {
+            throw new IllegalStateException("composite.loopback.client=webclient requires spring-boot-starter-webflux. "
+                    + "Add that dependency, or remove the property to use the built-in JDK client.");
         }
     }
 
-    private static String normalizePathPrefix(String path) {
-        if (path == null || path.isBlank()) {
-            return "";
-        }
-
-        String normalized = path.trim();
-        if (normalized.endsWith("/*")) {
-            normalized = normalized.substring(0, normalized.length() - 2);
-        }
-        while (normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        if (normalized.isEmpty()) {
-            return "";
-        }
-        return normalized.startsWith("/") ? normalized : "/" + normalized;
-    }
-
-    private static int toBufferLimit(DataSize maxResponseSize) {
-        if (maxResponseSize == null
-                || maxResponseSize.toBytes() < 1
-                || maxResponseSize.toBytes() > Integer.MAX_VALUE) {
-            throw new IllegalStateException(
-                    "composite.loopback.max-response-size must be between 1B and " + Integer.MAX_VALUE + "B");
-        }
-        return (int) maxResponseSize.toBytes();
-    }
-
-    private HttpClient configureHttpsClient(HttpClient httpClient, CompositeLoopbackProperties loopbackProperties) {
-        boolean serverSslEnabled = environment.getProperty("server.ssl.enabled", Boolean.class, false);
-
-        if (!serverSslEnabled) {
-            log.warn("""
-                    Composite loopback configured for HTTPS but server SSL is not enabled.
-                    Either:
-                      - Set server.ssl.enabled=true with a valid keystore
-                      - Or change composite.loopback.protocol=http for unencrypted loopback
-                    Attempting to proceed, but connections will likely fail.""");
-        }
-
-        if (loopbackProperties.isTrustSelfSignedCertificates()) {
-            log.warn("Composite loopback is configured to trust self-signed certificates. " +
-                    "This should only be used in development/testing environments.");
-            try {
-                SslContext sslContext = SslContextBuilder.forClient()
-                        .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                        .build();
-                return httpClient.secure(spec -> spec.sslContext(sslContext));
-            } catch (SSLException e) {
-                throw new IllegalStateException("Failed to configure SSL context for self-signed certificates", e);
-            }
-        } else {
-            log.info("""
-                    Composite loopback using HTTPS with default truststore.
-                    If using self-signed certificates, either:
-                      - Import your certificate into the JVM truststore (recommended for production)
-                      - Or set composite.loopback.trust-self-signed-certificates=true (dev/test only)""");
-        }
-
-        return httpClient;
-    }
 }

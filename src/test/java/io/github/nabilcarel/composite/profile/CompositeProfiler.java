@@ -53,7 +53,7 @@ public final class CompositeProfiler {
     }
 
     private static final boolean VIRTUAL_THREADS = Boolean.getBoolean("composite.profile.virtualThreads");
-    private static final String DISPATCHER = System.getProperty("composite.profile.dispatcher", "webclient");
+    private static final String DISPATCHER = System.getProperty("composite.profile.dispatcher", "jdk");
 
     private record Result(int size, Load load, double allocatedKbPerBatch, long gcCount, double gcPauseMillis,
                           double subRequestP99Millis, long batchEvents, long subRequestEvents, long samples,
@@ -213,7 +213,7 @@ public final class CompositeProfiler {
     private static boolean isServerThread(RecordedThread thread) {
         String name = thread == null ? null : thread.getJavaName();
         return name != null && (name.startsWith("http-nio-") || name.startsWith("reactor-http-")
-            || name.startsWith("HttpClient-") || name.startsWith("tomcat-handler-"));
+            || name.startsWith("HttpClient-") || name.startsWith("composite-http-") || name.startsWith("tomcat-handler-"));
     }
 
     private static Result analyze(int size, Load load, long allocated, Path file) throws IOException {

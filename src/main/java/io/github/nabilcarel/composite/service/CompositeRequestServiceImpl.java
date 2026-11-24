@@ -18,6 +18,7 @@ import io.github.nabilcarel.composite.internal.ActiveBatches;
 import io.github.nabilcarel.composite.internal.BatchExecution;
 import io.github.nabilcarel.composite.internal.DefaultCancellationSignal;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
+import io.github.nabilcarel.composite.internal.ResponseTooLargeException;
 import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
@@ -31,6 +32,8 @@ import io.github.nabilcarel.composite.observability.CompositeSubRequestEvent;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -234,10 +237,13 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     private static String transportFailureMessage(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             if (cause instanceof TimeoutException
-                    || cause instanceof io.netty.handler.timeout.TimeoutException) {
+                    || (cause instanceof HttpTimeoutException && !(cause instanceof HttpConnectTimeoutException))
+                    // Compared by name because Netty is optional.
+                    || cause.getClass().getName().equals("io.netty.handler.timeout.ReadTimeoutException")
+                    || cause.getClass().getName().equals("io.netty.handler.timeout.TimeoutException")) {
                 return "the endpoint did not respond in time.";
             }
-            if (cause instanceof DataBufferLimitException) {
+            if (cause instanceof DataBufferLimitException || cause instanceof ResponseTooLargeException) {
                 return "the response is larger than the allowed size.";
             }
             if (cause.getCause() == cause) {

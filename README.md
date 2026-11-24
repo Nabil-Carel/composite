@@ -220,6 +220,8 @@ composite.security.forwarded-headers=Authorization,Cookie
 composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-None-Match,If-Modified-Since,If-Unmodified-Since
 composite.security.blocked-headers=X-User-Id
 composite.header-injection.enabled=true
+# jdk (default, no extra dependency) or webclient (requires spring-boot-starter-webflux)
+composite.loopback.client=jdk
 composite.loopback.max-response-size=256KB
 # Defaults to half of server.tomcat.threads.max
 composite.loopback.max-connections=100
@@ -228,6 +230,8 @@ composite.max-request-size=2MB
 ```
 
 If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+
+Sub-requests are sent with the non-blocking JDK `HttpClient` by default, so Composite needs no Netty or Reactor Netty. Set `composite.loopback.client=webclient` and add `spring-boot-starter-webflux` to use WebClient instead. Both clients wait for responses without holding a thread.
 
 `composite.loopback.max-connections` also limits running sub-request handlers across all batches. Above it, calls wait for a connection, or return `503` if timed-out handlers are still running. The limit is shared, so one client sending many slow batches can delay other batch users. Add per-client rate limiting in production.
 
@@ -280,7 +284,7 @@ The Composite Endpoint Library acts as an intelligent request orchestrator that 
 1. **Request Acceptance**: Spring MVC authenticates, negotiates and binds the request to `/api/composite/execute`
 2. **Validation**: Validates the composite request structure and checks for circular dependencies
 3. **Dependency Analysis**: Parses subrequests and builds a dependency graph
-4. **Parallel Execution**: Independent requests execute in parallel using WebFlux's `WebClient`
+4. **Parallel Execution**: Independent requests execute in parallel through a non-blocking HTTP client
 5. **Loopback Calls**: Each subrequest makes an HTTP call back to `localhost` hitting your actual endpoints
 6. **Response Tracking**: Results are captured and stored, making them available for dependent requests
 7. **Reference Resolution**: Subsequent requests can reference earlier results using `${refId.property}` syntax
@@ -314,7 +318,7 @@ Authorization: Bearer <token>
 **What happens internally:**
 
 1. The composite controller receives the accepted request and validates its structure
-2. First subrequest: WebClient makes GET to `http://localhost:8080/api/account/123`
+2. First subrequest: the loopback client makes GET to `http://localhost:8080/api/account/123`
     - Authorization header automatically forwarded from parent request
     - Request goes through full Spring Security filter chain
     - Hits `AccountController.getAccount(123)`
@@ -322,7 +326,7 @@ Authorization: Bearer <token>
     - Stored in results map as `acc1`
 3. Second subrequest: `${acc1.id}` resolved to `123`
     - URL becomes `/api/orders/123`
-    - WebClient makes GET to `http://localhost:8080/api/orders/123`
+    - The loopback client makes GET to `http://localhost:8080/api/orders/123`
     - Authorization header forwarded again
     - Goes through Spring Security again
     - Hits `OrderController.getOrders(123)`
@@ -394,7 +398,7 @@ Composite requests are subject to normal Spring Boot request size limits (`serve
 
 ### Does this work with Spring WebFlux or other Java frameworks?
 
-No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). While it uses WebFlux's `WebClient` internally for making HTTP calls, the library itself requires servlet-based request handling. Pure Spring WebFlux (reactive) applications are not currently supported.
+No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). The library requires servlet-based request handling. Pure Spring WebFlux (reactive) applications are not currently supported.
 
 ### What happens if one request in the batch fails?
 
