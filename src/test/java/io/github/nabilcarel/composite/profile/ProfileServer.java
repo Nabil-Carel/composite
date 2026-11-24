@@ -30,7 +30,8 @@ public final class ProfileServer {
         try (ConfigurableApplicationContext context = new SpringApplicationBuilder(ProfileApplication.class)
                 .properties("server.port=0", "spring.main.banner-mode=off", "logging.level.root=ERROR",
                     "spring.threads.virtual.enabled=" + Boolean.getBoolean("composite.profile.virtualThreads"),
-                    "composite.loopback.client=" + System.getProperty("composite.profile.dispatcher", "jdk"))
+                    "composite.loopback.client=" + System.getProperty("composite.profile.dispatcher", "jdk"),
+                    "composite.loopback.max-connections=" + System.getProperty("composite.profile.maxConnections", "100"))
                 .run();
              BufferedReader commands = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             control.println("PROFILE PORT " + context.getEnvironment().getProperty("local.server.port"));

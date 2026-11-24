@@ -16,11 +16,12 @@ import io.github.nabilcarel.composite.internal.LoopbackAddress;
 import io.github.nabilcarel.composite.service.*;
 import jakarta.validation.Validator;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import org.springframework.core.env.Environment;
+import org.springframework.core.task.VirtualThreadTaskExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -34,6 +35,7 @@ import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.autoconfigure.thread.Threading;
 import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
@@ -263,8 +265,15 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
                 LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties), sslContext);
     }
 
-    /** Completes responses. The work never blocks, so a few threads serve every call. */
-    private static ExecutorService loopbackExecutor() {
+    /**
+     * Completes responses. The work never blocks, so a few platform threads serve every call,
+     * or virtual threads when {@code spring.threads.virtual.enabled=true}.
+     */
+    private Executor loopbackExecutor() {
+        if (Threading.VIRTUAL.isActive(environment)) {
+            return new VirtualThreadTaskExecutor("composite-http-");
+        }
+
         AtomicInteger count = new AtomicInteger();
         int threads = Math.max(2, Math.min(Runtime.getRuntime().availableProcessors(), 8));
         return Executors.newFixedThreadPool(threads, runnable -> {

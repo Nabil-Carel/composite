@@ -223,7 +223,7 @@ composite.header-injection.enabled=true
 # jdk (default, no extra dependency) or webclient (requires spring-boot-starter-webflux)
 composite.loopback.client=jdk
 composite.loopback.max-response-size=256KB
-# Defaults to half of server.tomcat.threads.max
+# Defaults to half of server.tomcat.threads.max, or half of server.tomcat.max-connections with virtual threads
 composite.loopback.max-connections=100
 composite.max-resolved-size=1MB
 composite.max-request-size=2MB

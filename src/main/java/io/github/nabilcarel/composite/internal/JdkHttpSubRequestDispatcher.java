@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,8 +32,8 @@ import org.springframework.http.MediaType;
 /**
  * Default dispatcher, backed by the non-blocking JDK {@link HttpClient}.
  *
- * <p>No thread waits for a response: the client's selector thread watches connections and a
- * small executor completes results. Calls above the connection limit wait in a queue rather
+ * <p>No thread waits for a response: the client's selector thread watches connections and an
+ * executor completes results. That executor uses virtual threads when the application does. Calls above the connection limit wait in a queue rather
  * than reaching the server's handler limit. Responses are read up to
  * {@code composite.loopback.max-response-size}.
  */
@@ -42,7 +43,7 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
     private static final Set<String> RESTRICTED = Set.of("connection", "content-length", "expect", "host", "upgrade");
 
     private final HttpClient client;
-    private final ExecutorService executor;
+    private final Executor executor;
     private final Supplier<String> baseUrl;
     private final ObjectMapper objectMapper;
     private final Duration responseTimeout;
@@ -55,14 +56,14 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
      *
      * @param baseUrl the application's base URL, read on each call
      * @param objectMapper serialises request bodies
-     * @param executor completes responses; closed with the dispatcher
+     * @param executor completes responses; shut down with the dispatcher if it is an executor service
      * @param connectTimeout connection timeout
      * @param responseTimeout time to wait for response headers, or {@code null} for none
      * @param maxResponseBytes largest response body read into memory
      * @param maxConnections calls sent at the same time
      * @param sslContext TLS settings, or {@code null} for the JVM default
      */
-    public JdkHttpSubRequestDispatcher(Supplier<String> baseUrl, ObjectMapper objectMapper, ExecutorService executor,
+    public JdkHttpSubRequestDispatcher(Supplier<String> baseUrl, ObjectMapper objectMapper, Executor executor,
                                        Duration connectTimeout, Duration responseTimeout, long maxResponseBytes,
                                        int maxConnections, SSLContext sslContext) {
         HttpClient.Builder builder = HttpClient.newBuilder()
@@ -93,7 +94,9 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
 
     @Override
     public void close() {
-        executor.shutdownNow();
+        if (executor instanceof ExecutorService service) {
+            service.shutdownNow();
+        }
     }
 
     private void drain() {

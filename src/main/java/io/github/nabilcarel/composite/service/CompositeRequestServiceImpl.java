@@ -32,6 +32,7 @@ import io.github.nabilcarel.composite.observability.CompositeSubRequestEvent;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import java.net.ConnectException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
@@ -65,6 +66,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.util.ClassUtils;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
+import reactor.util.retry.Retry;
 
 @RequiredArgsConstructor
 @Slf4j
@@ -202,6 +204,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         String endpoint = resolvedEndpointInfo.get().getPattern();
 
         return dispatch(prepared)
+                // A refused connection means the request was never sent, so it is safe to retry.
+                .retryWhen(CONNECT_RETRY)
                 .map(result -> toSubResponse(result, subRequest.getReferenceId()))
                 .timeout(timeout)
                 .doOnSubscribe(subscription -> event.begin())
@@ -224,6 +228,27 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                         subRequest.getMethod().toUpperCase(), endpoint, recordedStatus.get(),
                         signal == SignalType.CANCEL && recordedStatus.get() == 0))
                 .then();
+    }
+
+    /**
+     * Retries connections the server refused, for example while a burst of new loopback
+     * connections fills Tomcat's accept queue. The sub-request timeout still bounds the total.
+     */
+    private static final Retry CONNECT_RETRY = Retry.backoff(3, Duration.ofMillis(10))
+            .maxBackoff(Duration.ofMillis(100))
+            .filter(CompositeRequestServiceImpl::isConnectFailure)
+            .onRetryExhaustedThrow((spec, signal) -> signal.failure());
+
+    private static boolean isConnectFailure(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConnectException) {
+                return true;
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return false;
     }
 
     /** Only library validation messages are safe to return to the client. */

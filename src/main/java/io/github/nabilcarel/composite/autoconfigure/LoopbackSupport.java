@@ -9,6 +9,7 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.thread.Threading;
 import org.springframework.core.env.Environment;
 import org.springframework.util.unit.DataSize;
 
@@ -19,18 +20,29 @@ final class LoopbackSupport {
     private LoopbackSupport() {
     }
 
-    /** Defaults to half of Tomcat's thread pool, leaving the rest for normal traffic. */
+    /**
+     * Limits loopback calls by the resource that runs out first, leaving half of it for normal
+     * traffic.
+     *
+     * <p>With platform threads, each running sub-request holds a Tomcat thread, so the default
+     * is half of {@code server.tomcat.threads.max}. With virtual threads, threads are no longer
+     * scarce but each call still holds a client and a server connection, so the default is half
+     * of {@code server.tomcat.max-connections}.
+     */
     static int effectiveMaxConnections(Environment environment, CompositeLoopbackProperties loopbackProperties) {
-        Integer configuredThreads = environment.getProperty("server.tomcat.threads.max", Integer.class, 200);
-        int serverThreads = configuredThreads == null ? 200 : configuredThreads;
+        boolean virtualThreads = Threading.VIRTUAL.isActive(environment);
+        String limitProperty = virtualThreads ? "server.tomcat.max-connections" : "server.tomcat.threads.max";
+        int defaultLimit = virtualThreads ? 8192 : 200;
+        Integer configured = environment.getProperty(limitProperty, Integer.class, defaultLimit);
+        int serverLimit = configured == null || configured < 1 ? defaultLimit : configured;
 
         if (loopbackProperties.getMaxConnections() == null) {
-            return Math.max(1, serverThreads / 2);
+            return Math.max(1, serverLimit / 2);
         }
 
-        if (loopbackProperties.getMaxConnections() >= serverThreads) {
-            log.warn("composite.loopback.max-connections ({}) leaves no Tomcat threads for normal traffic ({})",
-                    loopbackProperties.getMaxConnections(), serverThreads);
+        if (loopbackProperties.getMaxConnections() >= serverLimit) {
+            log.warn("composite.loopback.max-connections ({}) leaves no capacity in {} ({}) for normal traffic",
+                    loopbackProperties.getMaxConnections(), limitProperty, serverLimit);
         }
         return loopbackProperties.getMaxConnections();
     }

@@ -42,6 +42,7 @@ class CompositeExtensionIntegrationTest {
 
     private static final List<PreparedSubRequest> REQUESTS = new CopyOnWriteArrayList<>();
     private static final AtomicBoolean CANCELLED = new AtomicBoolean();
+    private static final java.util.concurrent.atomic.AtomicInteger REFUSED = new java.util.concurrent.atomic.AtomicInteger();
 
     @Autowired
     private TestRestTemplate rest;
@@ -60,6 +61,13 @@ class CompositeExtensionIntegrationTest {
                 public CompletionStage<DispatchResult> dispatch(PreparedSubRequest request,
                                                                 CancellationSignal cancellation) {
                     REQUESTS.add(request);
+                    if (request.url().contains("/refused-twice") && REFUSED.incrementAndGet() <= 2) {
+                        return CompletableFuture.failedFuture(new java.net.ConnectException("refused"));
+                    }
+                    if (request.url().contains("/refused-always")) {
+                        REFUSED.incrementAndGet();
+                        return CompletableFuture.failedFuture(new java.net.ConnectException("refused"));
+                    }
                     if (request.url().contains("/failing")) {
                         return CompletableFuture.failedFuture(new IllegalStateException("internal-host:1234"));
                     }
@@ -79,6 +87,31 @@ class CompositeExtensionIntegrationTest {
     void reset() {
         REQUESTS.clear();
         CANCELLED.set(false);
+        REFUSED.set(0);
+    }
+
+    @Test
+    void refusedConnection_isRetried() throws Exception {
+        JsonNode response = new ObjectMapper().readTree(execute(get("a", "refused-twice")).getBody());
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(200);
+        assertThat(REFUSED).hasValue(3);
+    }
+
+    @Test
+    void refusedConnection_givesUpAfterThreeRetries() throws Exception {
+        JsonNode response = new ObjectMapper().readTree(execute(get("a", "refused-always")).getBody());
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
+        assertThat(response.at("/responses/a/body").asText()).contains("could not be reached");
+        assertThat(REFUSED).hasValue(4);
+    }
+
+    @Test
+    void otherFailures_areNotRetried() {
+        execute(get("a", "failing"));
+
+        assertThat(REQUESTS).hasSize(1);
     }
 
     private ResponseEntity<String> execute(String... subRequests) {

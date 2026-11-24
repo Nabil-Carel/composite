@@ -123,7 +123,8 @@ tasks.register('jvmProfile', JavaExec) {
     javaLauncher = javaToolchains.launcherFor(java.toolchain)
     jvmArgs '-Xms512m', '-Xmx512m', '-XX:+UnlockDiagnosticVMOptions', '-XX:+DebugNonSafepoints'
     systemProperty 'composite.profile.output', layout.buildDirectory.dir('reports/jvm-profile').get().asFile.path
-    ['concurrency', 'warmupSeconds', 'measureSeconds', 'virtualThreads', 'dispatcher'].each { name ->
+    ['concurrency', 'warmupSeconds', 'measureSeconds', 'virtualThreads', 'dispatcher', 'handlerDelayMillis',
+     'maxConnections'].each { name ->
         if (project.hasProperty(name)) {
             systemProperty "composite.profile.${name}", project.property(name)
         }

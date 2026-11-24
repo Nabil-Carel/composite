@@ -106,8 +106,10 @@ public final class CompositeLoopbackProperties {
      *
      * <p>Calls above the connection limit wait until the batch deadline. If handlers from
      * cancelled calls are still running at the limit, new sub-requests fail with {@code 503}.
-     * Keep this below {@code server.tomcat.threads.max}. When unset, it defaults to half of
-     * that value, which is {@code 100} with Tomcat's default of 200 threads.
+     * When unset, it defaults to half of the server resource that runs out first: half of
+     * {@code server.tomcat.threads.max} ({@code 100} by default) on platform threads, or half
+     * of {@code server.tomcat.max-connections} ({@code 4096} by default) when
+     * {@code spring.threads.virtual.enabled=true}.
      */
     @Min(1)
     private Integer maxConnections;

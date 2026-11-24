@@ -10,6 +10,7 @@ import org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAut
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** A minimal host whose handlers do almost no work, so the profile shows library overhead. */
@@ -26,7 +27,13 @@ public class ProfileApplication {
 
         @CompositeEndpoint
         @GetMapping("/profile/items/{id}")
-        public Map<String, Object> item(@PathVariable("id") String id) {
+        public Map<String, Object> item(@PathVariable("id") String id,
+                                        @RequestParam(name = "delayMs", defaultValue = "0") long delayMs)
+                throws InterruptedException {
+            if (delayMs > 0) {
+                // Stands in for a blocking database or remote call.
+                Thread.sleep(delayMs);
+            }
             return Map.of(
                 "id", id,
                 "name", "Item " + id,

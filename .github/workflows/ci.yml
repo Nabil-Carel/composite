@@ -164,8 +164,9 @@ jobs:
           header = next(i for i, line in enumerate(lines) if '| Errors |' in line)
           rows = [line for line in lines[header + 2:] if line.startswith('|')]
           rows = rows[:next((i for i, line in enumerate(rows) if not line[1:].strip()[0].isdigit()), len(rows))]
-          errors = sum(int(row.split('|')[6]) for row in rows)
-          print(f'{len(rows)} batch sizes, {errors} errors')
+          # Columns 6 and 7: failed batches and failed sub-requests.
+          errors = sum(int(row.split('|')[6]) + int(row.split('|')[7]) for row in rows)
+          print(f'{len(rows)} batch sizes, {errors} failed batches or sub-requests')
           sys.exit(1 if errors or not rows else 0)
           EOF
           cat build/reports/jvm-profile/profile.md >> "$GITHUB_STEP_SUMMARY"

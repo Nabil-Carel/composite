@@ -497,6 +497,17 @@ class CompositeAdversarialIntegrationTest {
         }
     }
 
+    /**
+     * With platform threads, the handler limit is half of the 20 Tomcat threads, so abandoned
+     * handlers cannot exhaust the pool. Virtual threads have no pool to exhaust, so the limit
+     * follows Tomcat's connection limit instead, and only responsiveness and recovery apply.
+     */
+    private static void assertHandlerLimitHeld() {
+        if (!Boolean.getBoolean("spring.threads.virtual.enabled")) {
+            assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
+        }
+    }
+
     @Nested
     @SpringBootTest(
         classes = CompositeIntegrationTestApplication.class,
@@ -534,7 +545,7 @@ class CompositeAdversarialIntegrationTest {
             }
             executor.shutdown();
 
-            assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
+            assertHandlerLimitHeld();
             assertThat(latencies).allMatch(latency -> latency < 300);
             assertThat(activeBatches.count()).isZero();
             assertThat(execute(client, port, batch(get("a", "/api/adv/items/1"))).statusCode()).isEqualTo(200);
@@ -578,7 +589,7 @@ class CompositeAdversarialIntegrationTest {
             }
             executor.shutdown();
 
-            assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
+            assertHandlerLimitHeld();
             assertThat(latency).isLessThan(500);
             assertThat(activeBatches.count()).isZero();
 
