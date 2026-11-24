@@ -8,11 +8,10 @@ import io.github.nabilcarel.composite.dispatch.CancellationSignal;
 import io.github.nabilcarel.composite.dispatch.DispatchResult;
 import io.github.nabilcarel.composite.dispatch.PreparedSubRequest;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +48,7 @@ class CompositeExtensionIntegrationTest {
     @Autowired
     private ConfigurableApplicationContext context;
     @Autowired
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
 
     @TestConfiguration
     static class DispatcherConfiguration {
@@ -129,6 +128,6 @@ class CompositeExtensionIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
         assertThat(CANCELLED).isTrue();
-        assertThat(responseStore).isEmpty();
+        assertThat(activeBatches.count()).isZero();
     }
 }

@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
+import io.github.nabilcarel.composite.internal.BatchExecution;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
@@ -31,7 +32,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -61,12 +61,12 @@ class CompositeRequestServiceImplTest {
     @Mock
     private ClientResponse.Headers clientResponseHeaders;
     @Mock
-    private ResponseTracker responseTracker;
+    private BatchExecution batch;
 
     private final SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), null);
     private ObjectMapper objectMapper;
     private CompositeProperties properties;
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
     private CompositeRequestServiceImpl service;
 
     private static final String REQUEST_ID = "test-request-id";
@@ -77,13 +77,12 @@ class CompositeRequestServiceImplTest {
         objectMapper = new ObjectMapper();
         properties = new CompositeProperties();
         properties.setRequestTimeout(Duration.ofSeconds(30));
-        responseStore = new ConcurrentHashMap<>();
-        responseStore.put(REQUEST_ID, responseTracker);
+        activeBatches = new ActiveBatches();
 
         service = new CompositeRequestServiceImpl(
             endpointRegistry,
             objectMapper,
-            responseStore,
+            activeBatches,
             compositeRequestValidator,
             referenceResolver,
             properties,
@@ -91,6 +90,13 @@ class CompositeRequestServiceImplTest {
             new WebClientSubRequestDispatcher(webClient),
             new io.github.nabilcarel.composite.internal.DispatchMarker()
         );
+    }
+
+    private BatchExecution batchWith(SubRequestContext context) {
+        lenient().when(batch.id()).thenReturn(REQUEST_ID);
+        lenient().when(batch.context()).thenReturn(context);
+        lenient().when(batch.responses()).thenReturn(Map.of());
+        return batch;
     }
 
     // ========== Endpoint Validation Tests ==========
@@ -102,10 +108,10 @@ class CompositeRequestServiceImplTest {
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.empty());
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
@@ -119,15 +125,15 @@ class CompositeRequestServiceImplTest {
 
         when(endpointRegistry.getEndpointInformations("GET", "/api/users/${user.id}"))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/malicious/path");
         when(endpointRegistry.getEndpointInformations("GET", "/api/malicious/path"))
             .thenReturn(Optional.empty());
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
@@ -143,13 +149,13 @@ class CompositeRequestServiceImplTest {
 
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenThrow(new RuntimeException("Reference not found"));
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
@@ -165,15 +171,15 @@ class CompositeRequestServiceImplTest {
 
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn("Invalid URL format");
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
@@ -190,15 +196,15 @@ class CompositeRequestServiceImplTest {
         setupSuccessfulWebClientMock(responseBody, Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(200);
@@ -213,15 +219,15 @@ class CompositeRequestServiceImplTest {
         setupVoidWebClientMock();
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/orders/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(204);
@@ -238,15 +244,15 @@ class CompositeRequestServiceImplTest {
         setupErrorWebClientMock(404, "Not Found");
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/notfound");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(404);
@@ -260,15 +266,15 @@ class CompositeRequestServiceImplTest {
         setupErrorWebClientMock(500, "Internal Server Error");
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(500);
@@ -282,15 +288,15 @@ class CompositeRequestServiceImplTest {
         setupErrorWebClientMockWithEmptyBody(404);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/notfound");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(404);
@@ -307,15 +313,15 @@ class CompositeRequestServiceImplTest {
         setupWebClientExceptionMock(new RuntimeException("Connection refused"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         ArgumentCaptor<SubResponse> responseCaptor = ArgumentCaptor.forClass(SubResponse.class);
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
+        verify(batch).addResponse(eq(REFERENCE_ID), responseCaptor.capture());
 
         SubResponse response = responseCaptor.getValue();
         assertThat(response.getHttpStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
@@ -337,14 +343,14 @@ class CompositeRequestServiceImplTest {
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
+        verify(batch).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
     }
 
     // ========== Cancellation Tests ==========
@@ -355,7 +361,7 @@ class CompositeRequestServiceImplTest {
         when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(createEndpointInfo("/api/users/{id}")));
-        when(referenceResolver.resolveUrl(any(), anyString())).thenReturn("/api/users/123");
+        when(referenceResolver.resolveUrl(any(), anyMap())).thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString())).thenReturn(null);
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
@@ -371,12 +377,12 @@ class CompositeRequestServiceImplTest {
         var execution = service.execute(request,
             mock(jakarta.servlet.http.HttpServletRequest.class),
             mock(jakarta.servlet.http.HttpServletResponse.class));
-        assertThat(responseStore).hasSize(2);
+        assertThat(activeBatches.count()).isEqualTo(1);
 
         execution.cancel(true);
 
         assertThat(callCancelled).isTrue();
-        assertThat(responseStore).containsOnlyKeys(REQUEST_ID);
+        assertThat(activeBatches.count()).isZero();
     }
 
     // ========== Request Body Tests ==========
@@ -395,7 +401,7 @@ class CompositeRequestServiceImplTest {
         stubJsonBody(Map.of("id", "new-id"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
@@ -406,9 +412,9 @@ class CompositeRequestServiceImplTest {
             return handler.apply(clientResponse);
         });
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
-        verify(responseTracker).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
+        verify(batch).addResponse(eq(REFERENCE_ID), any(SubResponse.class));
     }
 
     // ========== Helper Methods ==========

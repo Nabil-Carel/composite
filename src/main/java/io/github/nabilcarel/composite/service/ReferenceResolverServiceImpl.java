@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.node.TextNode;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.model.NodeReference;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.SubResponse;
 import io.github.nabilcarel.composite.util.ReferencePath;
@@ -16,14 +15,13 @@ import java.math.BigDecimal;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
-import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * Default {@link ReferenceResolverService} implementation that resolves
  * {@code ${referenceId.propertyPath}} placeholder expressions against the JSON responses
- * stored in the shared {@link ResponseTracker} map.
+ * already recorded for the batch.
  *
  * <p>Paths are navigated by {@link ReferencePath}, so they use the JSON field names a client
  * sees. A placeholder that is an entire body value keeps its JSON type. A placeholder inside
@@ -42,7 +40,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
-    private final ConcurrentMap<String, ResponseTracker> responseStore;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper mapper;
     private final CompositeProperties properties;
@@ -87,15 +84,15 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         return new ResolutionBudget(properties.getMaxResolvedSize().toBytes());
     }
 
-    public String resolveUrl(SubRequest subRequest, String batchId) {
+    public String resolveUrl(SubRequest subRequest, Map<String, SubResponse> responses) {
         ResolutionBudget budget = newBudget();
         String url = SubRequestTarget.parse(subRequest.getUrl())
-                .render(expression -> resolveToText(expression, batchId, budget));
+                .render(expression -> resolveToText(expression, responses, budget));
         subRequest.setResolvedUrl(url);
         return url;
     }
 
-    public void resolveHeaders(SubRequest subRequest, String batchId) {
+    public void resolveHeaders(SubRequest subRequest, Map<String, SubResponse> responses) {
         if(subRequest.getHeaders() == null || subRequest.getHeaders().isEmpty()) {
             return;
         }
@@ -105,7 +102,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
                 java.util.stream.Collectors.toMap(
                         java.util.Map.Entry::getKey,
                         entry -> sanitizeHeaderValue(ReferenceTemplate.parse(entry.getValue())
-                                .render(expression -> resolveToText(expression, batchId, budget)))
+                                .render(expression -> resolveToText(expression, responses, budget)))
                 )
         ));
     }
@@ -121,7 +118,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         return value.replaceAll("\\p{Cntrl}", "");
     }
 
-    public void resolveBody(SubRequest subRequest, String batchId) {
+    public void resolveBody(SubRequest subRequest, Map<String, SubResponse> responses) {
         if (subRequest.getBody() == null) {
             return;
         }
@@ -129,7 +126,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         ResolutionBudget budget = newBudget();
 
         if (subRequest.getBody().isTextual()) {
-            JsonNode resolved = resolveTextValue(subRequest.getBody().textValue(), batchId, budget);
+            JsonNode resolved = resolveTextValue(subRequest.getBody().textValue(), responses, budget);
             if (resolved != null) {
                 subRequest.setBody(resolved);
             }
@@ -139,7 +136,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         subRequest.initNodeReferences();
 
         for (NodeReference nodeRef : subRequest.getNodeReferences()) {
-            JsonNode resolved = resolveTextValue(nodeRef.getValue().asText(), batchId, budget);
+            JsonNode resolved = resolveTextValue(nodeRef.getValue().asText(), responses, budget);
             if (resolved != null) {
                 nodeRef.overrideValue(resolved);
             }
@@ -147,7 +144,7 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
     }
 
     /** Returns the resolved value, or {@code null} when the text contains no references. */
-    private JsonNode resolveTextValue(String text, String batchId, ResolutionBudget budget) {
+    private JsonNode resolveTextValue(String text, Map<String, SubResponse> responses, ResolutionBudget budget) {
         ReferenceTemplate template = ReferenceTemplate.parse(text);
 
         if (!template.hasReferences()) {
@@ -157,25 +154,25 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         if (template.isSingleReference()) {
             // Entire value is one reference, so it keeps its original type
             String expression = template.tokens().get(0).text();
-            JsonNode value = resolveNonNull(expression, batchId);
+            JsonNode value = resolveNonNull(expression, responses);
             budget.charge(value, expression);
             return value.deepCopy();
         }
 
         // Mixed content: "Hello ${user.name}, order #${order.id}!"
-        return new TextNode(template.render(expression -> resolveToText(expression, batchId, budget)));
+        return new TextNode(template.render(expression -> resolveToText(expression, responses, budget)));
     }
 
-    private JsonNode resolveNonNull(String expression, String batchId) {
-        JsonNode value = resolve(expression, batchId);
+    private JsonNode resolveNonNull(String expression, Map<String, SubResponse> responses) {
+        JsonNode value = resolve(expression, responses);
         if (value.isNull()) {
             throw new ReferenceResolutionException("${" + expression + "} is null. Reference a field that has a value.", expression);
         }
         return value;
     }
 
-    private String resolveToText(String expression, String batchId, ResolutionBudget budget) {
-        JsonNode value = resolveNonNull(expression, batchId);
+    private String resolveToText(String expression, Map<String, SubResponse> responses, ResolutionBudget budget) {
+        JsonNode value = resolveNonNull(expression, responses);
 
         if (!value.isValueNode()) {
             throw new ReferenceResolutionException(
@@ -195,19 +192,9 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
         return text;
     }
 
-    private JsonNode resolve(String expression, String batchId) {
+    private JsonNode resolve(String expression, Map<String, SubResponse> responses) {
         ReferencePath path = ReferencePath.parse(expression);
         String referenceId = path.referenceId();
-        ResponseTracker tracker = responseStore.get(batchId);
-
-        if (tracker == null) {
-            throw new ReferenceResolutionException("No responses found for batch ID: " + batchId, referenceId);
-        }
-
-        Map<String, SubResponse> responses = tracker.getSubResponseMap();
-        if (responses == null) {
-            throw new IllegalArgumentException("Response map not initialized for batch ID: " + batchId);
-        }
 
         SubResponse subResponse = responses.get(referenceId);
         if (subResponse == null) {

@@ -89,7 +89,7 @@ class CompositeAutoConfigurationContextTest {
         runner.withBean("responseStore", String.class, () -> "host-bean").run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context.getBean("responseStore")).isEqualTo("host-bean");
-            assertThat(context).hasBean("compositeResponseStore");
+            assertThat(context).hasBean("compositeActiveBatches");
         });
     }
 

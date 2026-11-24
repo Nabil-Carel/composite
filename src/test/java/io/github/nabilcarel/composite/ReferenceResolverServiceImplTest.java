@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.SubResponse;
@@ -16,7 +15,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -24,19 +22,15 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ReferenceResolverServiceImplTest {
 
-    @Mock
-    private ConcurrentMap<String, ResponseTracker> responseStore;
-    @Mock
-    private ResponseTracker tracker;
     private final ObjectMapper mapper = new ObjectMapper();
     private SubRequest subRequest;
-    private final String batchId = "test-batch-id";
+    private Map<String, SubResponse> responses = new HashMap<>();
 
     private ReferenceResolverServiceImpl referenceResolverService;
 
     @BeforeEach
     void setUp() {
-        referenceResolverService = new ReferenceResolverServiceImpl(responseStore, mapper,
+        referenceResolverService = new ReferenceResolverServiceImpl(mapper,
             new io.github.nabilcarel.composite.config.CompositeProperties());
 
         subRequest = new SubRequest(SubRequestDto.builder().build());
@@ -46,7 +40,6 @@ class ReferenceResolverServiceImplTest {
     }
 
     private Map<String, SubResponse> createStubs() {
-        when(responseStore.get(batchId)).thenReturn(tracker);
 
         Map<String, SubResponse> subResponseMap = new HashMap<>();
         SubResponse subResponse = new SubResponse();
@@ -55,14 +48,14 @@ class ReferenceResolverServiceImplTest {
         body.put("city", "New York");
         subResponse.setBody(body);
         subResponseMap.put("user", subResponse);
-        when(tracker.getSubResponseMap()).thenReturn(subResponseMap);
+        responses = subResponseMap;
         return subResponseMap;
     }
 
     @Test
     void testResolveUrl_withPlaceholder() {
         createStubs();
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/John%20Doe");
         assertThat(subRequest.getResolvedUrl()).isEqualTo("/api/John%20Doe");
     }
@@ -71,7 +64,7 @@ class ReferenceResolverServiceImplTest {
     void testResolveUrl_withMultiplePlaceholders() {
         createStubs();
         subRequest.setUrl("/api/${user.name}/city/${user.city}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/John%20Doe/city/New%20York");
     }
 
@@ -81,7 +74,7 @@ class ReferenceResolverServiceImplTest {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-User", "${user.name}");
         subRequest.setHeaders(headers);
-        referenceResolverService.resolveHeaders(subRequest, batchId);
+        referenceResolverService.resolveHeaders(subRequest, responses);
         assertThat(subRequest.getResolvedHeaders()).containsEntry("X-User", "John Doe");
     }
 
@@ -90,14 +83,14 @@ class ReferenceResolverServiceImplTest {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-Static", "static-value");
         subRequest.setHeaders(headers);
-        referenceResolverService.resolveHeaders(subRequest, batchId);
+        referenceResolverService.resolveHeaders(subRequest, responses);
         assertThat(subRequest.getResolvedHeaders()).containsEntry("X-Static", "static-value");
     }
 
     @Test
     void testResolveBody_withNullBody_doesNotThrow() {
         // subRequest has null body (set in setUp) — resolveBody should exit cleanly
-        assertThatCode(() -> referenceResolverService.resolveBody(subRequest, batchId))
+        assertThatCode(() -> referenceResolverService.resolveBody(subRequest, responses))
             .doesNotThrowAnyException();
     }
 
@@ -105,7 +98,7 @@ class ReferenceResolverServiceImplTest {
     void testResolveUrl_invalidPlaceholder_throwsException() {
         createStubs();
         subRequest.setUrl("/api/${invalid}");
-        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, batchId))
+        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, responses))
             .isInstanceOf(ReferenceResolutionException.class)
             .hasMessageContaining("No response found for reference ID");
     }
@@ -113,10 +106,9 @@ class ReferenceResolverServiceImplTest {
     @Test
     void testResolveUrl_missingResponseBody_throwsException() {
         createStubs();
-        ResponseTracker localTracker = responseStore.get(batchId);
-        localTracker.getSubResponseMap().remove("user");
+        responses.remove("user");
         subRequest.setUrl("/api/${user.name}");
-        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, batchId))
+        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, responses))
             .isInstanceOf(ReferenceResolutionException.class)
             .hasMessageContaining("No response found for reference ID");
     }
@@ -133,7 +125,7 @@ class ReferenceResolverServiceImplTest {
         map.put("users", usersResponse);
 
         subRequest.setUrl("/api/users/${users[0].id}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
 
         assertThat(resolvedUrl).isEqualTo("/api/users/1");
     }
@@ -149,7 +141,7 @@ class ReferenceResolverServiceImplTest {
         map.put("config", configResponse);
 
         subRequest.setUrl("/api/${config['database.host']}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/localhost");
     }
 
@@ -163,7 +155,7 @@ class ReferenceResolverServiceImplTest {
         map.put("user", userResponse);
 
         subRequest.setUrl("/api/users/${user.name}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
 
         assertThat(resolvedUrl).satisfiesAnyOf(
             url -> assertThat(url).contains("John%20Doe"),
@@ -181,7 +173,7 @@ class ReferenceResolverServiceImplTest {
         map.put("user", userResponse);
 
         subRequest.setUrl("/api/users/${user.email}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
 
         assertThat(resolvedUrl).satisfiesAnyOf(
             url -> assertThat(url).contains("%40"),
@@ -193,7 +185,7 @@ class ReferenceResolverServiceImplTest {
     void testResolveUrl_withNestedPlaceholders_isRejected() {
         subRequest.setUrl("/api/${${ref.target}.name}");
 
-        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, batchId))
+        assertThatThrownBy(() -> referenceResolverService.resolveUrl(subRequest, responses))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Nested references");
     }
@@ -209,7 +201,7 @@ class ReferenceResolverServiceImplTest {
         map.put("a", aResponse);
 
         subRequest.setUrl("/api/${a.value}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
 
         assertThat(resolvedUrl).isEqualTo("/api/%24%7Buser.name%7D");
     }
@@ -235,7 +227,7 @@ class ReferenceResolverServiceImplTest {
             .build();
         SubRequest request = new SubRequest(dto);
 
-        referenceResolverService.resolveBody(request, batchId);
+        referenceResolverService.resolveBody(request, responses);
 
         assertThat(request.getBody()).isNotNull();
         String resolvedValue = request.getBody().get("userId").asText();
@@ -262,7 +254,7 @@ class ReferenceResolverServiceImplTest {
                 .build();
             SubRequest request = new SubRequest(dto);
 
-            referenceResolverService.resolveBody(request, batchId);
+            referenceResolverService.resolveBody(request, responses);
             
             String resolvedValue = request.getBody().get("city").asText();
             assertThat(resolvedValue).isEqualTo("New York");
@@ -282,7 +274,7 @@ class ReferenceResolverServiceImplTest {
         assertThat(dependencies).contains("users")
             .doesNotContain("users[0");
 
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/1");
     }
 
@@ -295,14 +287,13 @@ class ReferenceResolverServiceImplTest {
         configBody.put("api-key", "secret123");
         configResponse.setBody(configBody);
         subResponseMap.put("config", configResponse);
-        when(tracker.getSubResponseMap()).thenReturn(subResponseMap);
-        when(responseStore.get(batchId)).thenReturn(tracker);
+        responses = subResponseMap;
 
         Map<String, String> headers = new HashMap<>();
         headers.put("X-API-Key", "${config['api-key']}");
         subRequest.setHeaders(headers);
         
-        referenceResolverService.resolveHeaders(subRequest, batchId);
+        referenceResolverService.resolveHeaders(subRequest, responses);
         assertThat(subRequest.getResolvedHeaders()).containsEntry("X-API-Key", "secret123");
     }
 
@@ -315,7 +306,7 @@ class ReferenceResolverServiceImplTest {
 
         subRequest.setUrl("/api/${user.name}");
         assertThatThrownBy(() ->
-            referenceResolverService.resolveUrl(subRequest, batchId))
+            referenceResolverService.resolveUrl(subRequest, responses))
             .isInstanceOf(ReferenceResolutionException.class);
     }
 
@@ -329,7 +320,7 @@ class ReferenceResolverServiceImplTest {
         map.put("data", dataResponse);
 
         subRequest.setUrl("/api/${data.id}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/123");
     }
 
@@ -342,7 +333,7 @@ class ReferenceResolverServiceImplTest {
         map.put("items", itemsResponse);
 
         subRequest.setUrl("/api/${items[0]}");
-        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, batchId);
+        String resolvedUrl = referenceResolverService.resolveUrl(subRequest, responses);
         assertThat(resolvedUrl).isEqualTo("/api/item1");
     }
 }

@@ -5,17 +5,15 @@ import static org.openjdk.jcstress.annotations.Expect.FORBIDDEN;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
+import io.github.nabilcarel.composite.internal.BatchExecution;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.SubRequestForwarder;
-import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
-import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import io.github.nabilcarel.composite.service.CompositeBatchContextImpl;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -74,6 +72,20 @@ public final class CompositeConcurrencyStress {
         return request;
     }
 
+    private static SubRequest subRequest(String id, String... dependencies) {
+        SubRequest request = subRequest(id);
+        request.setDependencies(Set.of(dependencies));
+        return request;
+    }
+
+    private static BatchExecution batch(FakeService service, int limit, boolean stopOnFailure, SubRequest... requests) {
+        Map<String, SubRequest> byId = new LinkedHashMap<>();
+        for (SubRequest request : requests) {
+            byId.put(request.getReferenceId(), request);
+        }
+        return new BatchExecution("batch", byId, service, CONTEXT, limit, stopOnFailure);
+    }
+
     /** Records dispatches and returns a call chosen by the test. */
     private static final class FakeService implements SubRequestForwarder {
         private final Map<String, AtomicInteger> calls = new ConcurrentHashMap<>();
@@ -85,7 +97,7 @@ public final class CompositeConcurrencyStress {
         }
 
         @Override
-        public Mono<Void> forwardSubrequest(SubRequest subRequest, String requestId, SubRequestContext context) {
+        public Mono<Void> forwardSubrequest(SubRequest subRequest, BatchExecution batch) {
             calls.computeIfAbsent(subRequest.getReferenceId(), id -> new AtomicInteger()).incrementAndGet();
             total.incrementAndGet();
             return callFor.apply(subRequest.getReferenceId());
@@ -98,102 +110,113 @@ public final class CompositeConcurrencyStress {
     }
 
     @JCStressTest
-    @Description("Two dependencies finishing together make their dependent ready exactly once.")
-    @Outcome(id = {"1, 0", "0, 1"}, expect = ACCEPTABLE, desc = "Exactly one thread unlocks the dependent")
+    @Description("Two dependencies finishing together start their dependent exactly once.")
+    @Outcome(id = "1", expect = ACCEPTABLE, desc = "Dependent started once")
     @Outcome(expect = FORBIDDEN, desc = "Dependent was lost or dispatched twice")
     @State
     public static class DependentBecomesReadyOnce {
-        private final SubRequestCoordinatorImpl coordinator =
-            new SubRequestCoordinatorImpl(Map.of("a", Set.of(), "b", Set.of(), "c", Set.of("a", "b")));
+        private final FakeService service = new FakeService(id -> Mono.never());
+        private final BatchExecution batch =
+            batch(service, 5, false, subRequest("a"), subRequest("b"), subRequest("c", "a", "b"));
 
         public DependentBecomesReadyOnce() {
-            coordinator.markInProgress("a");
-            coordinator.markInProgress("b");
+            batch.start();
         }
 
         @Actor
-        public void first(II_Result result) {
-            result.r1 = coordinator.markResolved("a").size();
+        public void first() {
+            batch.addResponse("a", response("a", 200));
         }
 
         @Actor
-        public void second(II_Result result) {
-            result.r2 = coordinator.markResolved("b").size();
+        public void second() {
+            batch.addResponse("b", response("b", 200));
+        }
+
+        @Arbiter
+        public void arbiter(I_Result result) {
+            result.r1 = service.calls("c");
         }
     }
 
     @JCStressTest
-    @Description("Only one thread can claim a ready sub-request.")
-    @Outcome(id = {"1, 0", "0, 1"}, expect = ACCEPTABLE, desc = "One winner")
+    @Description("Concurrent starts dispatch a ready sub-request once.")
+    @Outcome(id = "1", expect = ACCEPTABLE, desc = "One dispatch")
     @Outcome(expect = FORBIDDEN, desc = "Double dispatch or no dispatch")
     @State
     public static class SubRequestClaimedOnce {
-        private final SubRequestCoordinatorImpl coordinator =
-            new SubRequestCoordinatorImpl(Map.of("a", Set.of()));
+        private final FakeService service = new FakeService(id -> Mono.never());
+        private final BatchExecution batch = batch(service, 5, false, subRequest("a"));
 
         @Actor
-        public void first(II_Result result) {
-            result.r1 = coordinator.markInProgress("a") ? 1 : 0;
+        public void first() {
+            batch.start();
         }
 
         @Actor
-        public void second(II_Result result) {
-            result.r2 = coordinator.markInProgress("a") ? 1 : 0;
+        public void second() {
+            batch.start();
+        }
+
+        @Arbiter
+        public void arbiter(I_Result result) {
+            result.r1 = service.calls("a");
         }
     }
 
     @JCStressTest
     @Description("Resolving the same sub-request twice unlocks its dependent once.")
-    @Outcome(id = {"1, 0", "0, 1"}, expect = ACCEPTABLE, desc = "One resolution counted")
+    @Outcome(id = "1", expect = ACCEPTABLE, desc = "One resolution counted")
     @Outcome(expect = FORBIDDEN, desc = "Dependency counted twice or not at all")
     @State
     public static class SubRequestResolvedOnce {
-        private final SubRequestCoordinatorImpl coordinator =
-            new SubRequestCoordinatorImpl(Map.of("a", Set.of(), "b", Set.of("a")));
+        private final FakeService service = new FakeService(id -> Mono.never());
+        private final BatchExecution batch = batch(service, 5, false, subRequest("a"), subRequest("b", "a"));
 
         public SubRequestResolvedOnce() {
-            coordinator.markInProgress("a");
+            batch.start();
         }
 
         @Actor
-        public void first(II_Result result) {
-            result.r1 = coordinator.markResolved("a").size();
+        public void first() {
+            batch.addResponse("a", response("a", 200));
         }
 
         @Actor
-        public void second(II_Result result) {
-            result.r2 = coordinator.markResolved("a").size();
+        public void second() {
+            batch.addResponse("a", response("a", 200));
+        }
+
+        @Arbiter
+        public void arbiter(I_Result result) {
+            result.r1 = service.calls("b");
         }
     }
 
     @JCStressTest
     @Description("The batch completes with every response after concurrent results.")
-    @Outcome(id = "1, 2", expect = ACCEPTABLE, desc = "Complete, with both callbacks")
+    @Outcome(id = "1, 2", expect = ACCEPTABLE, desc = "Complete, with both responses")
     @Outcome(expect = FORBIDDEN, desc = "Batch hung or lost a response")
     @State
-    public static class TrackerCompletesWithAllResponses {
-        private final ResponseTrackerImpl tracker = new ResponseTrackerImpl(2);
-        private final AtomicInteger callbacks = new AtomicInteger();
-
-        public TrackerCompletesWithAllResponses() {
-            tracker.setOnSubRequestResolved(id -> callbacks.incrementAndGet());
-        }
+    public static class BatchCompletesWithAllResponses {
+        private final BatchExecution batch =
+            batch(new FakeService(id -> Mono.never()), 5, false, subRequest("a"), subRequest("b"));
 
         @Actor
         public void first() {
-            tracker.addResponse("a", response("a", 200));
+            batch.addResponse("a", response("a", 200));
         }
 
         @Actor
         public void second() {
-            tracker.addResponse("b", response("b", 200));
+            batch.addResponse("b", response("b", 200));
         }
 
         @Arbiter
         public void arbiter(II_Result result) {
-            CompositeResponse response = tracker.getFuture().getNow(null);
+            CompositeResponse response = batch.future().getNow(null);
             result.r1 = response != null && response.getResponses().size() == 2 ? 1 : 0;
-            result.r2 = callbacks.get();
+            result.r2 = batch.responses().size();
         }
     }
 
@@ -202,28 +225,24 @@ public final class CompositeConcurrencyStress {
     @Outcome(id = "0, 1", expect = ACCEPTABLE, desc = "Batch still waits for the other sub-request")
     @Outcome(expect = FORBIDDEN, desc = "Duplicate result completed the batch early")
     @State
-    public static class TrackerCountsDuplicateOnce {
-        private final ResponseTrackerImpl tracker = new ResponseTrackerImpl(2);
-        private final AtomicInteger callbacks = new AtomicInteger();
-
-        public TrackerCountsDuplicateOnce() {
-            tracker.setOnSubRequestResolved(id -> callbacks.incrementAndGet());
-        }
+    public static class BatchCountsDuplicateOnce {
+        private final BatchExecution batch =
+            batch(new FakeService(id -> Mono.never()), 5, false, subRequest("a"), subRequest("b"));
 
         @Actor
         public void result() {
-            tracker.addResponse("a", response("a", 200));
+            batch.addResponse("a", response("a", 200));
         }
 
         @Actor
         public void cancellation() {
-            tracker.addResponse("a", response("a", 503));
+            batch.addResponse("a", response("a", 503));
         }
 
         @Arbiter
         public void arbiter(II_Result result) {
-            result.r1 = tracker.getFuture().isDone() ? 1 : 0;
-            result.r2 = callbacks.get();
+            result.r1 = batch.future().isDone() ? 1 : 0;
+            result.r2 = batch.responses().size();
         }
     }
 
@@ -235,34 +254,23 @@ public final class CompositeConcurrencyStress {
     @Outcome(expect = FORBIDDEN, desc = "A running call was reported as not executed")
     @State
     public static class StopNeverHidesARunningCall {
-        private final ResponseTrackerImpl tracker = new ResponseTrackerImpl(2);
         private final FakeService service = new FakeService(id -> Mono.never());
-        private final CompositeBatchContextImpl batch;
-
-        public StopNeverHidesARunningCall() {
-            Map<String, SubRequest> requests = new HashMap<>();
-            requests.put("failed", subRequest("failed"));
-            requests.put("queued", subRequest("queued"));
-            SubRequestCoordinatorImpl coordinator =
-                new SubRequestCoordinatorImpl(Map.of("failed", Set.of(), "queued", Set.of()));
-            coordinator.markInProgress("failed");
-            batch = new CompositeBatchContextImpl(tracker, coordinator, requests, service, "batch", CONTEXT, 5, true);
-        }
+        private final BatchExecution batch = batch(service, 5, true, subRequest("failed"), subRequest("queued"));
 
         @Actor
         public void dispatch() {
-            batch.startInitialRequests();
+            batch.start();
         }
 
         @Actor
         public void failure() {
-            tracker.addResponse("failed", response("failed", 500));
+            batch.addResponse("failed", response("failed", 500));
         }
 
         @Arbiter
         public void arbiter(II_Result result) {
             result.r1 = service.calls("queued");
-            SubResponse queued = tracker.getSubResponseMap().get("queued");
+            SubResponse queued = batch.responses().get("queued");
             result.r2 = queued == null ? 0 : queued.getHttpStatus();
         }
     }
@@ -273,29 +281,18 @@ public final class CompositeConcurrencyStress {
     @Outcome(expect = FORBIDDEN, desc = "Limit exceeded or no work started")
     @State
     public static class ConcurrencyLimitHolds {
-        private final ResponseTrackerImpl tracker = new ResponseTrackerImpl(3);
         private final FakeService service = new FakeService(id -> Mono.never());
-        private final CompositeBatchContextImpl batch;
-
-        public ConcurrencyLimitHolds() {
-            Map<String, SubRequest> requests = new HashMap<>();
-            requests.put("initial", subRequest("initial"));
-            requests.put("done", subRequest("done"));
-            requests.put("dependent", subRequest("dependent"));
-            SubRequestCoordinatorImpl coordinator = new SubRequestCoordinatorImpl(Map.of(
-                "initial", Set.of(), "done", Set.of(), "dependent", Set.of("done")));
-            coordinator.markInProgress("done");
-            batch = new CompositeBatchContextImpl(tracker, coordinator, requests, service, "batch", CONTEXT, 1);
-        }
+        private final BatchExecution batch = batch(service, 1, false,
+            subRequest("initial"), subRequest("done"), subRequest("dependent", "done"));
 
         @Actor
         public void initial() {
-            batch.startInitialRequests();
+            batch.start();
         }
 
         @Actor
         public void dependent() {
-            tracker.addResponse("done", response("done", 200));
+            batch.addResponse("done", response("done", 200));
         }
 
         @Arbiter
@@ -306,25 +303,18 @@ public final class CompositeConcurrencyStress {
 
     @JCStressTest
     @Description("Work queued while a slot is released is never stranded.")
-    @Outcome(id = "2", expect = ACCEPTABLE, desc = "The queued sub-request started")
+    @Outcome(id = "3", expect = ACCEPTABLE, desc = "The queued sub-request started")
     @Outcome(expect = FORBIDDEN, desc = "Queued work was stranded or started twice")
     @State
     public static class QueuedWorkIsNeverStranded {
-        private final ResponseTrackerImpl tracker = new ResponseTrackerImpl(3);
         private final Sinks.Empty<Void> running = Sinks.empty();
         private final FakeService service =
             new FakeService(id -> id.equals("running") ? running.asMono() : Mono.never());
+        private final BatchExecution batch = batch(service, 2, false,
+            subRequest("running"), subRequest("done"), subRequest("dependent", "done"));
 
         public QueuedWorkIsNeverStranded() {
-            Map<String, SubRequest> requests = new HashMap<>();
-            requests.put("running", subRequest("running"));
-            requests.put("done", subRequest("done"));
-            requests.put("dependent", subRequest("dependent"));
-            SubRequestCoordinatorImpl coordinator = new SubRequestCoordinatorImpl(Map.of(
-                "running", Set.of(), "done", Set.of(), "dependent", Set.of("done")));
-            coordinator.markInProgress("done");
-            new CompositeBatchContextImpl(tracker, coordinator, requests, service, "batch", CONTEXT, 1)
-                .startInitialRequests();
+            batch.start();
         }
 
         @Actor
@@ -334,7 +324,7 @@ public final class CompositeConcurrencyStress {
 
         @Actor
         public void queueDependent() {
-            tracker.addResponse("done", response("done", 200));
+            batch.addResponse("done", response("done", 200));
         }
 
         @Arbiter

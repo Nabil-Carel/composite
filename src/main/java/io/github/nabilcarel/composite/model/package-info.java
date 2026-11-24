@@ -1,14 +1,8 @@
 /**
  * Core domain model for the Composite library.
  *
- * <p>This package contains the runtime coordination types:
+ * <p>This package contains structural body references:
  * <ul>
- *   <li>{@link io.github.nabilcarel.composite.model.ResponseTracker} /
- *       {@link io.github.nabilcarel.composite.model.ResponseTrackerImpl} — accumulates
- *       sub-responses and signals overall completion.</li>
- *   <li>{@link io.github.nabilcarel.composite.model.SubRequestCoordinator} /
- *       {@link io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl} — manages
- *       the dependency DAG and determines execution order.</li>
  *   <li>{@link io.github.nabilcarel.composite.model.NodeReference},
  *       {@link io.github.nabilcarel.composite.model.ObjectFieldReference},
  *       {@link io.github.nabilcarel.composite.model.ArrayElementReference} — structural

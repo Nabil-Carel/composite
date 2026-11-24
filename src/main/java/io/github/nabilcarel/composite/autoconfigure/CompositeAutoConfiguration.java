@@ -7,11 +7,11 @@ import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import io.github.nabilcarel.composite.internal.CompositeRequestBodyExceptionResolver;
 import io.github.nabilcarel.composite.internal.CompositeRequestSizeAdvice;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
 import io.netty.channel.ChannelOption;
 import jakarta.annotation.PreDestroy;
@@ -22,8 +22,6 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 import javax.net.ssl.SSLException;
 import org.springframework.core.env.Environment;
@@ -76,10 +74,6 @@ import reactor.netty.resources.ConnectionProvider;
  *       replace the default HTTP client.</li>
  *   <li>The validator, reference resolver, credential forwarding service and composite
  *       service, each replaceable by declaring a bean of its interface type.</li>
- *   <li>A {@link java.util.concurrent.ConcurrentMap} keyed by request ID, acting as the
- *       in-flight
- *       {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker}
- *       store.</li>
  *   <li>A {@link org.springframework.web.servlet.config.annotation.WebMvcConfigurer} that
  *       registers the {@link CompositeDispatchInterceptor}.</li>
  * </ul>
@@ -198,15 +192,13 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Provides the shared, thread-safe map used to store in-flight
-     * {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker} instances,
-     * keyed by composite request UUID.
+     * Counts running composite requests for health reporting.
      *
-     * @return a new {@link ConcurrentHashMap}
+     * @return the counter
      */
-    @Bean("compositeResponseStore")
-    public ConcurrentMap<String, ResponseTracker> responseStore(){
-        return new ConcurrentHashMap<>();
+    @Bean
+    public ActiveBatches compositeActiveBatches() {
+        return new ActiveBatches();
     }
 
     /**
@@ -252,16 +244,14 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     /**
      * Resolves references between sub-requests.
      *
-     * @param responseStore in-flight responses
      * @param objectMapper the composite object mapper
      * @return the default resolver
      */
     @Bean
     @ConditionalOnMissingBean
     public ReferenceResolverService compositeReferenceResolver(
-            ConcurrentMap<String, ResponseTracker> responseStore,
             @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
-        return new ReferenceResolverServiceImpl(responseStore, objectMapper, properties);
+        return new ReferenceResolverServiceImpl(objectMapper, properties);
     }
 
     /**
@@ -283,7 +273,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      *
      * @param endpointRegistry the endpoint registry
      * @param objectMapper the composite object mapper
-     * @param responseStore in-flight responses
+     * @param activeBatches running batch counter
      * @param validator the request validator
      * @param referenceResolver the reference resolver
      * @param authenticationForwardingService the credential forwarding service
@@ -297,13 +287,13 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     public CompositeRequestService compositeRequestService(
             EndpointRegistry endpointRegistry,
             @Qualifier("compositeObjectMapper") ObjectMapper objectMapper,
-            ConcurrentMap<String, ResponseTracker> responseStore,
+            ActiveBatches activeBatches,
             CompositeRequestValidator validator,
             ReferenceResolverService referenceResolver,
             AuthenticationForwardingService authenticationForwardingService,
             @Lazy SubRequestDispatcher dispatcher,
             DispatchMarker dispatchMarker) {
-        return new CompositeRequestServiceImpl(endpointRegistry, objectMapper, responseStore, validator,
+        return new CompositeRequestServiceImpl(endpointRegistry, objectMapper, activeBatches, validator,
                 referenceResolver, properties, authenticationForwardingService, dispatcher, dispatchMarker);
     }
 
@@ -383,9 +373,9 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
 
         @Bean
         @ConditionalOnMissingBean(name = "compositeHealthIndicator")
-        CompositeHealthIndicator compositeHealthIndicator(ConcurrentMap<String, ResponseTracker> responseStore,
+        CompositeHealthIndicator compositeHealthIndicator(ActiveBatches activeBatches,
                                                           EndpointRegistry endpointRegistry) {
-            return new CompositeHealthIndicator(responseStore, endpointRegistry);
+            return new CompositeHealthIndicator(activeBatches, endpointRegistry);
         }
     }
 

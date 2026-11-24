@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
+import io.github.nabilcarel.composite.internal.BatchExecution;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
@@ -34,7 +35,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -64,13 +64,13 @@ class CompositeDebugInfoTest {
     @Mock
     private ClientResponse.Headers clientResponseHeaders;
     @Mock
-    private ResponseTracker responseTracker;
+    private BatchExecution batch;
     @Mock
     private HttpServletRequest servletRequest;
 
     private ObjectMapper objectMapper;
     private CompositeProperties properties;
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
     private CompositeRequestServiceImpl service;
 
     private static final String REQUEST_ID = "test-request-id";
@@ -81,13 +81,12 @@ class CompositeDebugInfoTest {
         objectMapper = new ObjectMapper();
         properties = new CompositeProperties();
         properties.setRequestTimeout(Duration.ofSeconds(30));
-        responseStore = new ConcurrentHashMap<>();
-        responseStore.put(REQUEST_ID, responseTracker);
+        activeBatches = new ActiveBatches();
 
         service = new CompositeRequestServiceImpl(
             endpointRegistry,
             objectMapper,
-            responseStore,
+            activeBatches,
             compositeRequestValidator,
             referenceResolver,
             properties,
@@ -95,6 +94,13 @@ class CompositeDebugInfoTest {
             new WebClientSubRequestDispatcher(webClient),
             new io.github.nabilcarel.composite.internal.DispatchMarker()
         );
+    }
+
+    private BatchExecution batchWith(SubRequestContext context) {
+        lenient().when(batch.id()).thenReturn(REQUEST_ID);
+        lenient().when(batch.context()).thenReturn(context);
+        lenient().when(batch.responses()).thenReturn(Map.of());
+        return batch;
     }
 
     // ========== Debug Enabled Tests ==========
@@ -114,12 +120,12 @@ class CompositeDebugInfoTest {
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/42");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -147,7 +153,7 @@ class CompositeDebugInfoTest {
             ((com.fasterxml.jackson.databind.node.ObjectNode) req.getBody())
                 .put("userId", "resolved-42");
             return null;
-        }).when(referenceResolver).resolveBody(any(), anyString());
+        }).when(referenceResolver).resolveBody(any(), anyMap());
 
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
@@ -156,7 +162,7 @@ class CompositeDebugInfoTest {
         stubJsonBody(Map.of("orderId", "new-order"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/orders");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
@@ -166,7 +172,7 @@ class CompositeDebugInfoTest {
             return handler.apply(clientResponse);
         });
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -192,12 +198,12 @@ class CompositeDebugInfoTest {
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, requestContext).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -216,7 +222,7 @@ class CompositeDebugInfoTest {
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
@@ -226,7 +232,7 @@ class CompositeDebugInfoTest {
                 .resolvedRequests(new ConcurrentHashMap<>())
                 .build();
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, new SubRequestContext(new HttpHeaders(), debugInfo)).block();
+        service.forwardSubrequest(subRequest, batchWith(new SubRequestContext(new HttpHeaders(), debugInfo))).block();
 
         assertThat(debugInfo.getResolvedRequests()).isEmpty();
     }
@@ -355,7 +361,7 @@ class CompositeDebugInfoTest {
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);

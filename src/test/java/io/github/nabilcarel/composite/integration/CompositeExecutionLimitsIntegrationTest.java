@@ -6,13 +6,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.integration.controllers.TestLimitsController;
 import io.github.nabilcarel.composite.integration.controllers.TestSecurityController;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentMap;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -109,7 +108,7 @@ class CompositeExecutionLimitsIntegrationTest {
         @Autowired
         private ApplicationContext context;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @BeforeEach
         void reset() {
@@ -164,7 +163,7 @@ class CompositeExecutionLimitsIntegrationTest {
                 post(rest, batch(List.of(get("a", "/api/sec/secret")))).getBody());
 
             assertThat(response.at("/responses/a").has("headers")).isFalse();
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
         }
     }
 
@@ -234,7 +233,7 @@ class CompositeExecutionLimitsIntegrationTest {
         @Autowired
         private TestRestTemplate rest;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @BeforeEach
         void warmUp() {
@@ -256,12 +255,12 @@ class CompositeExecutionLimitsIntegrationTest {
                     .getBytes(StandardCharsets.US_ASCII));
                 output.write(bytes);
                 output.flush();
-                waitUntil(() -> !responseStore.isEmpty(), 1000);
+                waitUntil(() -> !activeBatches.isEmpty(), 1000);
             }
 
             // Embedded Tomcat does not report the disconnect, so the batch deadline is the bound.
-            waitUntil(responseStore::isEmpty, 1400);
-            assertThat(responseStore).isEmpty();
+            waitUntil(activeBatches::isEmpty, 1400);
+            assertThat(activeBatches.count()).isZero();
 
             Thread.sleep(1000);
             assertThat(TestSecurityController.lastEcho).isNull();

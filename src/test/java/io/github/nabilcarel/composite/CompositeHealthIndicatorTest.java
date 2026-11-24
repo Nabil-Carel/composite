@@ -2,7 +2,7 @@ package io.github.nabilcarel.composite;
 
 import io.github.nabilcarel.composite.autoconfigure.CompositeHealthIndicator;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,11 +12,8 @@ import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.Status;
 
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,13 +22,13 @@ class CompositeHealthIndicatorTest {
     @Mock
     private EndpointRegistry endpointRegistry;
 
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
     private CompositeHealthIndicator healthIndicator;
 
     @BeforeEach
     void setUp() {
-        responseStore = new ConcurrentHashMap<>();
-        healthIndicator = new CompositeHealthIndicator(responseStore, endpointRegistry);
+        activeBatches = new ActiveBatches();
+        healthIndicator = new CompositeHealthIndicator(activeBatches, endpointRegistry);
     }
 
     @Test
@@ -45,8 +42,8 @@ class CompositeHealthIndicatorTest {
 
     @Test
     void health_reportsActiveCompositeRequests() {
-        responseStore.put("req1", mock(ResponseTracker.class));
-        responseStore.put("req2", mock(ResponseTracker.class));
+        activeBatches.increment();
+        activeBatches.increment();
         when(endpointRegistry.getAvailableEndpoints()).thenReturn(Set.of());
 
         Health health = healthIndicator.health();

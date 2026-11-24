@@ -3,7 +3,7 @@ package io.github.nabilcarel.composite;
 import io.github.nabilcarel.composite.autoconfigure.CompositeAutoConfiguration;
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,7 +16,6 @@ import org.springframework.boot.web.server.WebServer;
 import org.springframework.core.env.Environment;
 import org.springframework.util.unit.DataSize;
 
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,10 +45,10 @@ class CompositeAutoConfigurationTest {
     }
 
     @Test
-    void responseStore_createsConcurrentMap() {
-        ConcurrentMap<String, ResponseTracker> store = autoConfiguration.responseStore();
+    void activeBatches_startsEmpty() {
+        ActiveBatches activeBatches = autoConfiguration.compositeActiveBatches();
 
-        assertThat(store).isNotNull().isEmpty();
+        assertThat(activeBatches.isEmpty()).isTrue();
     }
 
     @Test

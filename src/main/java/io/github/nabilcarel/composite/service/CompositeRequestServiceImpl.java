@@ -14,12 +14,11 @@ import io.github.nabilcarel.composite.dispatch.DispatchResult;
 import io.github.nabilcarel.composite.dispatch.PreparedSubRequest;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
+import io.github.nabilcarel.composite.internal.BatchExecution;
 import io.github.nabilcarel.composite.internal.DefaultCancellationSignal;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.SubRequestForwarder;
-import io.github.nabilcarel.composite.model.ResponseTracker;
-import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
-import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestContext;
@@ -43,7 +42,6 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -82,7 +80,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     private final EndpointRegistry endpointRegistry;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper objectMapper;
-    private final ConcurrentMap<String, ResponseTracker> responseStore;
+    private final ActiveBatches activeBatches;
     private final CompositeRequestValidator compositeRequestValidator;
     private final ReferenceResolverService referenceResolver;
     private final CompositeProperties properties;
@@ -94,9 +92,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     @Override
     public Mono<Void> forwardSubrequest(
             SubRequest subRequest,
-            String requestId,
-            SubRequestContext context
+            BatchExecution batch
     ) {
+        String requestId = batch.id();
+        SubRequestContext context = batch.context();
 
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(
                 subRequest.getMethod().toUpperCase(), subRequest.getUrl()
@@ -104,7 +103,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         if (endpointInfo.isEmpty()) {
             log.error("Invalid endpoint received: {}", subRequest.getUrl());
-            addErrorToTracker(requestId, subRequest.getReferenceId(),
+            recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Invalid endpoint received: " + subRequest.getUrl()
                             + ". Check the method and path, and that the handler has @CompositeEndpoint.");
@@ -120,12 +119,12 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         String resolvedUrl;
         try {
-            resolvedUrl = referenceResolver.resolveUrl(subRequest, requestId);
-            referenceResolver.resolveHeaders(subRequest, requestId);
-            referenceResolver.resolveBody(subRequest, requestId);
+            resolvedUrl = referenceResolver.resolveUrl(subRequest, batch.responses());
+            referenceResolver.resolveHeaders(subRequest, batch.responses());
+            referenceResolver.resolveBody(subRequest, batch.responses());
         } catch (Exception e) {
             log.error("Reference resolution failed for {}: {}", subRequest.getReferenceId(), e.getMessage(), e);
-            addErrorToTracker(requestId, subRequest.getReferenceId(),
+            recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Reference resolution failed: " + resolutionFailureMessage(e));
             return Mono.empty();
@@ -152,7 +151,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         if (resolvedEndpointInfo.isEmpty()) {
             log.error("Resolved URL does not match registered endpoint: {} (original: {})",
                     resolvedUrl, subRequest.getUrl());
-            addErrorToTracker(requestId, subRequest.getReferenceId(),
+            recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Resolved URL does not match a registered endpoint: " + resolvedUrl
                             + ". A referenced value routed this sub-request to an unavailable path.");
@@ -163,7 +162,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         if (error != null) {
             log.error("Invalid URL format: {}", error);
-            addErrorToTracker(requestId, subRequest.getReferenceId(),
+            recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(), error);
             return Mono.empty();
         }
@@ -207,18 +206,12 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                     if (subResponse != null) {
                         recordedStatus.set(subResponse.getHttpStatus());
                     }
-                    ResponseTracker tracker = responseStore.get(requestId);
-                    if (tracker != null) {
-                        tracker.addResponse(subRequest.getReferenceId(), subResponse);
-                    } else {
-                        // Tracker missing - this is a critical error, request will hang
-                        log.error("ResponseTracker not found for ID: {} - request will not complete", requestId);
-                    }
+                    batch.addResponse(subRequest.getReferenceId(), subResponse);
                 })
                 .onErrorResume(throwable -> {
                     log.error("Error forwarding subrequest {}: {}", subRequest.getReferenceId(), throwable.getMessage(), throwable);
                     recordedStatus.set(HttpStatus.SERVICE_UNAVAILABLE.value());
-                    addErrorToTracker(requestId, subRequest.getReferenceId(),
+                    recordError(batch, subRequest.getReferenceId(),
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
                             "Error executing subrequest: " + transportFailureMessage(throwable));
                     return Mono.empty();
@@ -340,18 +333,12 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                 || (contentType.getSubtype() != null && contentType.getSubtype().endsWith("+json")));
     }
 
-    private void addErrorToTracker(String requestId, String referenceId, int status, String message) {
-        ResponseTracker tracker = responseStore.get(requestId);
-        if (tracker != null) {
-            SubResponse errorResponse = SubResponse.builder()
-                    .httpStatus(status)
-                    .referenceId(referenceId)
-                    .body(message)
-                    .build();
-            tracker.addResponse(referenceId, errorResponse);
-        } else {
-            log.error("ResponseTracker not found for requestId: {} - cannot record error for {}", requestId, referenceId);
-        }
+    private static void recordError(BatchExecution batch, String referenceId, int status, String message) {
+        batch.addResponse(referenceId, SubResponse.builder()
+                .httpStatus(status)
+                .referenceId(referenceId)
+                .body(message)
+                .build());
     }
 
     @Override
@@ -389,48 +376,41 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         SubRequestContext context = new SubRequestContext(
                 HttpHeaders.readOnlyHttpHeaders(forwardedHeaders), debugInfo);
 
-        ResponseTracker tracker = new ResponseTrackerImpl(requestMap.size());
-        responseStore.put(requestId, tracker);
-        CompositeBatchContext batchContext = new CompositeBatchContextImpl(
-                tracker, new SubRequestCoordinatorImpl(dependencyMap), requestMap, this, requestId, context,
+        BatchExecution batch = new BatchExecution(requestId, requestMap, this, context,
                 properties.getMaxConcurrentSubRequests(), compositeRequest.isStopOnFailure());
+        activeBatches.increment();
 
-        Runnable cleanup = () -> {
-            batchContext.cancel();
-            responseStore.remove(requestId);
-        };
-
-        AtomicBoolean batchRecorded = new AtomicBoolean();
-        Consumer<String> recordBatch = outcome -> {
-            if (batchRecorded.compareAndSet(false, true)) {
-                int failed = (int) tracker.getSubResponseMap().values().stream()
+        AtomicBoolean finished = new AtomicBoolean();
+        Consumer<String> finish = outcome -> {
+            if (finished.compareAndSet(false, true)) {
+                batch.cancel();
+                activeBatches.decrement();
+                int failed = (int) batch.responses().values().stream()
                         .filter(subResponse -> subResponse.getHttpStatus() < 200 || subResponse.getHttpStatus() >= 300)
                         .count();
                 batchEvent.finish(requestId, requestMap.size(), failed, compositeRequest.isStopOnFailure(), outcome);
             }
         };
 
-        CompletableFuture<ResponseEntity<CompositeResponse>> result = tracker.getFuture()
+        CompletableFuture<ResponseEntity<CompositeResponse>> result = batch.future()
                 .orTimeout(properties.getRequestTimeout().toMillis(), TimeUnit.MILLISECONDS)
                 .handle((compositeResponse, failure) -> {
-                    cleanup.run();
-                    recordBatch.accept(batchOutcome(compositeResponse, failure));
-                    return toResponseEntity(compositeResponse, failure, tracker, debugInfo);
+                    finish.accept(batchOutcome(compositeResponse, failure));
+                    return toResponseEntity(compositeResponse, failure, batch.responses(), debugInfo);
                 });
 
         // A cancelled stage skips the handler above, so cancellation cleans up directly.
         result.whenComplete((ignored, failure) -> {
             if (failure instanceof CancellationException) {
-                cleanup.run();
-                recordBatch.accept("CANCELLED");
-                tracker.cancel(failure);
+                finish.accept("CANCELLED");
+                batch.fail(failure);
             }
         });
 
         try {
-            batchContext.startInitialRequests();
+            batch.start();
         } catch (RuntimeException e) {
-            tracker.cancel(e);
+            batch.fail(e);
         }
 
         return result;
@@ -451,7 +431,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     }
 
     private ResponseEntity<CompositeResponse> toResponseEntity(CompositeResponse response, Throwable failure,
-                                                               ResponseTracker tracker, CompositeDebugInfo debugInfo) {
+                                                               Map<String, SubResponse> responses, CompositeDebugInfo debugInfo) {
         if (failure == null) {
             response.setDebug(debugInfo);
             return ResponseEntity.ok(response);
@@ -469,7 +449,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         }
 
         CompositeResponse errorResponse = CompositeResponse.builder()
-                .responses(new HashMap<>(tracker.getSubResponseMap()))
+                .responses(new HashMap<>(responses))
                 .hasErrors(true)
                 .errors(List.of(timedOut
                         ? "Composite request timed out before every sub-request finished. "

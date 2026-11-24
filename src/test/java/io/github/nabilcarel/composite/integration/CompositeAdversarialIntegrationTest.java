@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.nabilcarel.composite.integration.controllers.TestAdversarialController;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,7 +15,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -190,7 +189,7 @@ class CompositeAdversarialIntegrationTest {
         @Autowired
         private TestRestTemplate rest;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @BeforeEach
         void reset() {
@@ -419,7 +418,7 @@ class CompositeAdversarialIntegrationTest {
             ResponseEntity<String> response = post(rest, batch(get("v", "/api/adv/values"), write("w", nested)));
 
             assertThat(response.getStatusCode().is5xxServerError()).isFalse();
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
         }
 
         @Test
@@ -509,7 +508,7 @@ class CompositeAdversarialIntegrationTest {
         @LocalServerPort
         private int port;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @Test
         void normalTrafficStaysResponsive_andTheServerRecovers() throws Exception {
@@ -537,7 +536,7 @@ class CompositeAdversarialIntegrationTest {
 
             assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
             assertThat(latencies).allMatch(latency -> latency < 300);
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
             assertThat(execute(client, port, batch(get("a", "/api/adv/items/1"))).statusCode()).isEqualTo(200);
         }
     }
@@ -556,7 +555,7 @@ class CompositeAdversarialIntegrationTest {
         @LocalServerPort
         private int port;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @Test
         void repeatedTimeouts_cannotExhaustTheThreadPool() throws Exception {
@@ -581,7 +580,7 @@ class CompositeAdversarialIntegrationTest {
 
             assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
             assertThat(latency).isLessThan(500);
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
 
             Thread.sleep(2000);
             assertThat(execute(client, port, batch(get("a", "/api/adv/items/1"))).statusCode()).isEqualTo(200);

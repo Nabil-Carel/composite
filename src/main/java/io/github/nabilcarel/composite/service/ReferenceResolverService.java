@@ -1,11 +1,13 @@
 package io.github.nabilcarel.composite.service;
 
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.response.SubResponse;
+import java.util.Map;
 
 /**
  * Resolves {@code ${referenceId.propertyPath}} placeholder expressions within a
  * {@link SubRequest}'s URL, headers, and body by looking up completed sub-responses
- * from the shared response store.
+ * of the same batch.
  *
  * <p>Placeholder syntax supports:
  * <ul>
@@ -36,13 +38,12 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose URL is to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request, used to look up completed
-     *                   sub-responses; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @return the fully resolved and URI-encoded URL string
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    String resolveUrl(SubRequest subRequest, String batchId);
+    String resolveUrl(SubRequest subRequest, Map<String, SubResponse> responses);
 
     /**
      * Resolves all {@code ${...}} placeholder expressions in the sub-request body,
@@ -57,11 +58,11 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose body is to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    void resolveBody(SubRequest subRequest, String batchId);
+    void resolveBody(SubRequest subRequest, Map<String, SubResponse> responses);
 
     /**
      * Resolves all {@code ${...}} placeholder expressions in the sub-request headers and
@@ -72,9 +73,9 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose headers are to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    void resolveHeaders(SubRequest subRequest, String batchId);
+    void resolveHeaders(SubRequest subRequest, Map<String, SubResponse> responses);
 }

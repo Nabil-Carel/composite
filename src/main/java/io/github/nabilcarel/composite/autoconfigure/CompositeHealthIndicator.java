@@ -1,8 +1,7 @@
 package io.github.nabilcarel.composite.autoconfigure;
 
 import io.github.nabilcarel.composite.config.EndpointRegistry;
-import io.github.nabilcarel.composite.model.ResponseTracker;
-import java.util.concurrent.ConcurrentMap;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
@@ -14,7 +13,7 @@ import org.springframework.boot.actuate.health.HealthIndicator;
  * Reports {@code UP} at all times and exposes two detail values:
  * <ul>
  *   <li>{@code activeCompositeRequests} — the number of composite requests currently
- *       in-flight (entries in the shared response store).</li>
+ *       in-flight.</li>
  *   <li>{@code availableEndpoints} — the number of endpoints registered for composite
  *       execution.</li>
  * </ul>
@@ -30,7 +29,7 @@ import org.springframework.boot.actuate.health.HealthIndicator;
 @RequiredArgsConstructor
 public class CompositeHealthIndicator implements HealthIndicator {
 
-    private final ConcurrentMap<String, ResponseTracker> responseStore;
+    private final ActiveBatches activeBatches;
     private final EndpointRegistry endpointRegistry;
 
     /**
@@ -44,7 +43,7 @@ public class CompositeHealthIndicator implements HealthIndicator {
      */
     @Override
     public Health health(){
-        int activeCompositeRequests = responseStore.size();
+        int activeCompositeRequests = activeBatches.count();
         int availableEndpoints = endpointRegistry.getAvailableEndpoints().size();
 
         return Health.up().withDetail("activeCompositeRequests", activeCompositeRequests)

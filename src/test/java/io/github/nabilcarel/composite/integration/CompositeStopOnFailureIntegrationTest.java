@@ -5,8 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.integration.controllers.TestSecurityController;
-import io.github.nabilcarel.composite.model.ResponseTracker;
-import java.util.concurrent.ConcurrentMap;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +32,7 @@ class CompositeStopOnFailureIntegrationTest {
     @Autowired
     private TestRestTemplate rest;
     @Autowired
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
 
     @BeforeEach
     void warmUp() {
@@ -72,7 +71,7 @@ class CompositeStopOnFailureIntegrationTest {
         assertThat(result.at("/responses/after/httpStatus").asInt()).isEqualTo(424);
         assertThat(result.at("/responses/after/body").asText()).contains("Not executed");
         assertThat(elapsedMillis).isLessThan(650);
-        assertThat(responseStore).isEmpty();
+        assertThat(activeBatches.count()).isZero();
 
         Thread.sleep(900);
         assertThat(TestSecurityController.lastEcho).isNull();

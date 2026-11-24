@@ -1,19 +1,17 @@
 package io.github.nabilcarel.composite.internal;
 
 import io.github.nabilcarel.composite.model.request.SubRequest;
-import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import reactor.core.publisher.Mono;
 
 /** Internal scheduler callback. Not part of the public API. */
 public interface SubRequestForwarder {
 
     /**
-     * Resolves, validates and sends one sub-request, then records its result.
+     * Resolves, validates and sends one sub-request, then records its result on the batch.
      *
      * @param subRequest the sub-request
-     * @param requestId the batch ID
-     * @param context data captured for the batch
+     * @param batch the batch it belongs to
      * @return a publisher that completes after the result is recorded
      */
-    Mono<Void> forwardSubrequest(SubRequest subRequest, String requestId, SubRequestContext context);
+    Mono<Void> forwardSubrequest(SubRequest subRequest, BatchExecution batch);
 }

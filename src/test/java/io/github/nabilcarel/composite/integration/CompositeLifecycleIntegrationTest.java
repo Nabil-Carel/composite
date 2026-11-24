@@ -6,8 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.integration.controllers.TestLifecycleConfiguration;
 import io.github.nabilcarel.composite.integration.controllers.TestSecurityController;
-import io.github.nabilcarel.composite.model.ResponseTracker;
-import java.util.concurrent.ConcurrentMap;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -54,7 +53,7 @@ class CompositeLifecycleIntegrationTest {
         @Autowired
         private TestRestTemplate rest;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @BeforeEach
         void reset() {
@@ -70,7 +69,7 @@ class CompositeLifecycleIntegrationTest {
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
             assertThat(TestSecurityController.lastEcho).isNull();
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
         }
 
         @ParameterizedTest
@@ -89,7 +88,7 @@ class CompositeLifecycleIntegrationTest {
             ResponseEntity<String> response = post(rest, EXECUTE, body, MediaType.APPLICATION_JSON);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
         }
 
         @Test
@@ -106,7 +105,7 @@ class CompositeLifecycleIntegrationTest {
         void completedBatch_leavesNoTracker() {
             post(rest, EXECUTE, batch(sub("a", "GET", "/api/sec/secret", null)), MediaType.APPLICATION_JSON);
 
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
         }
 
         @Test
@@ -158,7 +157,7 @@ class CompositeLifecycleIntegrationTest {
         @Autowired
         private TestRestTemplate rest;
         @Autowired
-        private ConcurrentMap<String, ResponseTracker> responseStore;
+        private ActiveBatches activeBatches;
 
         @BeforeEach
         void warmUp() {
@@ -190,7 +189,7 @@ class CompositeLifecycleIntegrationTest {
                 MediaType.APPLICATION_JSON);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
-            assertThat(responseStore).isEmpty();
+            assertThat(activeBatches.count()).isZero();
 
             Thread.sleep(1000);
             assertThat(TestSecurityController.lastEcho).isNull();
