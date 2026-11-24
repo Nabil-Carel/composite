@@ -138,6 +138,7 @@ Use these for auditing and logging only. A direct client can send the same heade
 - Response values are substituted once, so stored data cannot act as a `${...}` reference.
 - Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
 - The caller stays authenticated for the async batch response when the app uses Spring Security's default security context repositories. A custom `SecurityContextRepository` must support async dispatches.
+- A gateway only sees the outer composite URL. Protect annotated endpoints with application-level authorization rather than relying only on gateway path rules.
 - Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
 
 ## Installation
@@ -223,6 +224,7 @@ composite.loopback.max-response-size=256KB
 # Defaults to half of server.tomcat.threads.max
 composite.loopback.max-connections=100
 composite.max-resolved-size=1MB
+composite.max-request-size=2MB
 ```
 
 If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.

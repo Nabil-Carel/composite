@@ -211,15 +211,15 @@ class CompositeAdversarialIntegrationTest {
         }
 
         @Test
-        void directCall_withDispatchHeader_cannotReachUnannotatedHandler() {
+        void directCall_withForgedDispatchHeader_isANormalDirectCall() {
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Composite-Dispatch", "true");
 
             ResponseEntity<String> response = rest.exchange("/api/adv/hidden", HttpMethod.GET,
                 new HttpEntity<>(headers), String.class);
 
-            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-            assertThat(TestAdversarialController.HIDDEN_CALLS).hasValue(0);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(TestAdversarialController.HIDDEN_CALLS).hasValue(1);
         }
 
         // ========== URL and encoding attacks ==========
@@ -424,11 +424,11 @@ class CompositeAdversarialIntegrationTest {
 
         @Test
         void hugeStringInRequest_isRejectedCleanly() {
-            String huge = "x".repeat(21 * 1024 * 1024);
+            String huge = "x".repeat(3 * 1024 * 1024);
 
             ResponseEntity<String> response = post(rest, batch(write("w", "{\"x\":\"" + huge + "\"}")));
 
-            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
             assertThat(TestAdversarialController.WRITES).hasValue(0);
         }
 

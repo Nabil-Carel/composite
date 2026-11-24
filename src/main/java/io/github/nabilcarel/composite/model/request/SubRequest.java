@@ -154,7 +154,12 @@ public class SubRequest {
     private void extractDependenciesFromBody(JsonNode node) {
         if (node == null) return;
 
-        if (node.isObject()) {
+        if (node.isTextual()) {
+            Matcher matcher = PLACEHOLDER_PATTERN.matcher(node.asText());
+            while (matcher.find()) {
+                dependencies.add(extractRootReferenceId(matcher.group(1)));
+            }
+        } else if (node.isObject()) {
             ObjectNode obj = (ObjectNode) node;
             Iterator<Map.Entry<String, JsonNode>> fields = obj.fields();
 

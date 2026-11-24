@@ -126,34 +126,44 @@ public class ReferenceResolverServiceImpl implements ReferenceResolverService {
             return;
         }
 
-        subRequest.initNodeReferences();
+        ResolutionBudget budget = newBudget();
 
-        if (subRequest.getNodeReferences().isEmpty()) {
+        if (subRequest.getBody().isTextual()) {
+            JsonNode resolved = resolveTextValue(subRequest.getBody().textValue(), batchId, budget);
+            if (resolved != null) {
+                subRequest.setBody(resolved);
+            }
             return;
         }
 
-        ResolutionBudget budget = newBudget();
+        subRequest.initNodeReferences();
 
         for (NodeReference nodeRef : subRequest.getNodeReferences()) {
-            String text = nodeRef.getValue().asText();
-            ReferenceTemplate template = ReferenceTemplate.parse(text);
-
-            if (!template.hasReferences()) {
-                continue; // Nothing to replace
-            }
-
-            if (template.isSingleReference()) {
-                // Entire value is one reference, so it keeps its original type
-                String expression = template.tokens().get(0).text();
-                JsonNode value = resolveNonNull(expression, batchId);
-                budget.charge(value, expression);
-                nodeRef.overrideValue(value.deepCopy());
-            } else {
-                // Mixed content: "Hello ${user.name}, order #${order.id}!"
-                nodeRef.overrideValue(new TextNode(
-                        template.render(expression -> resolveToText(expression, batchId, budget))));
+            JsonNode resolved = resolveTextValue(nodeRef.getValue().asText(), batchId, budget);
+            if (resolved != null) {
+                nodeRef.overrideValue(resolved);
             }
         }
+    }
+
+    /** Returns the resolved value, or {@code null} when the text contains no references. */
+    private JsonNode resolveTextValue(String text, String batchId, ResolutionBudget budget) {
+        ReferenceTemplate template = ReferenceTemplate.parse(text);
+
+        if (!template.hasReferences()) {
+            return null;
+        }
+
+        if (template.isSingleReference()) {
+            // Entire value is one reference, so it keeps its original type
+            String expression = template.tokens().get(0).text();
+            JsonNode value = resolveNonNull(expression, batchId);
+            budget.charge(value, expression);
+            return value.deepCopy();
+        }
+
+        // Mixed content: "Hello ${user.name}, order #${order.id}!"
+        return new TextNode(template.render(expression -> resolveToText(expression, batchId, budget)));
     }
 
     private JsonNode resolveNonNull(String expression, String batchId) {

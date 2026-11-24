@@ -17,6 +17,10 @@ import java.lang.annotation.Target;
  * response via the {@code ${referenceId.field}} placeholder syntax, using the field names a
  * client would see.
  *
+ * <p>Annotated endpoints can be called by anyone who can call the composite endpoint. Protect
+ * them with application-level authorization, such as Spring Security rules or
+ * {@code @PreAuthorize}, rather than relying only on a gateway path rule.
+ *
  * <h2>Usage example</h2>
  * <pre class="code">
  * &#64;RestController

@@ -105,7 +105,7 @@ class CompositeExtensionIntegrationTest {
         assertThat(dependent.method()).isEqualTo(HttpMethod.GET);
         assertThat(dependent.url()).isEqualTo("/api/sec/users/from-custom-dispatcher");
         assertThat(dependent.headers().getFirst(HttpHeaders.AUTHORIZATION)).isEqualTo("Bearer caller-token");
-        assertThat(dependent.headers().getFirst("X-Composite-Dispatch")).isEqualTo("true");
+        assertThat(dependent.headers().getFirst("X-Composite-Dispatch")).hasSizeGreaterThan(20);
     }
 
     @Test

@@ -1,7 +1,5 @@
 package io.github.nabilcarel.composite.controller;
 
-import com.fasterxml.jackson.core.JsonLocation;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
@@ -9,7 +7,6 @@ import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.service.CompositeRequestService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +15,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.async.DeferredResult;
 
@@ -105,38 +101,6 @@ public class CompositeController {
         });
 
         return result;
-    }
-
-    /**
-     * Explains an unreadable request body without echoing parser internals.
-     *
-     * @param exception the binding failure
-     * @return a {@code 400} composite response
-     */
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<CompositeResponse> handleUnreadableBody(HttpMessageNotReadableException exception) {
-        return ResponseEntity.badRequest().body(CompositeResponse.builder()
-                .hasErrors(true)
-                .errors(List.of(describeUnreadableBody(exception)))
-                .build());
-    }
-
-    private static String describeUnreadableBody(Throwable exception) {
-        JsonLocation location = null;
-
-        for (Throwable cause = exception; cause != null && cause.getCause() != cause; cause = cause.getCause()) {
-            if (cause instanceof IllegalArgumentException && String.valueOf(cause.getMessage()).startsWith("Unknown ")) {
-                return cause.getMessage();
-            }
-            if (cause instanceof JsonProcessingException json && json.getLocation() != null) {
-                location = json.getLocation();
-            }
-        }
-
-        String position = location == null ? ""
-                : " near line " + location.getLineNr() + ", column " + location.getColumnNr();
-        return "Request body is not valid composite JSON" + position
-                + ". Expected an object like {\"subRequests\":[{\"referenceId\":\"a\",\"method\":\"GET\",\"url\":\"/api/users/1\"}]}.";
     }
 
     /**

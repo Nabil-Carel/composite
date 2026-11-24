@@ -1,6 +1,7 @@
 package io.github.nabilcarel.composite.config;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
+import io.github.nabilcarel.composite.internal.DispatchMarker;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -26,8 +27,9 @@ import org.springframework.web.servlet.AsyncHandlerInterceptor;
  * connection limit alone cannot bound server threads. This interceptor therefore counts
  * running sub-request handlers and answers {@code 503} above the limit.
  *
- * <p>The header grants nothing: a client that sends it directly can only restrict its own
- * request. Error dispatches are ignored so an annotated handler keeps its error status.
+ * <p>The header carries a random per-application value. A request with any other value is a
+ * normal direct request and does not count against the limit. Error dispatches are ignored so
+ * an annotated handler keeps its error status.
  *
  * @since 0.0.1
  */
@@ -39,14 +41,17 @@ public class CompositeDispatchInterceptor implements AsyncHandlerInterceptor {
     private static final String PERMIT_ATTRIBUTE = CompositeDispatchInterceptor.class.getName() + ".permit";
 
     private final Semaphore permits;
+    private final DispatchMarker marker;
 
     /**
      * Creates the interceptor.
      *
      * @param maxConcurrentHandlers maximum sub-request handlers running at the same time
+     * @param marker identifies genuine loopback calls
      */
-    public CompositeDispatchInterceptor(int maxConcurrentHandlers) {
+    public CompositeDispatchInterceptor(int maxConcurrentHandlers, DispatchMarker marker) {
         this.permits = new Semaphore(maxConcurrentHandlers);
+        this.marker = marker;
     }
 
     @Override
@@ -54,7 +59,7 @@ public class CompositeDispatchInterceptor implements AsyncHandlerInterceptor {
                              @NonNull HttpServletResponse response,
                              @NonNull Object handler) {
         if (request.getDispatcherType() != DispatcherType.REQUEST
-                || request.getHeader(DISPATCH_HEADER) == null) {
+                || !marker.matches(request.getHeader(DISPATCH_HEADER))) {
             return true;
         }
 

@@ -7,6 +7,9 @@ import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.controller.CompositeController;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
+import io.github.nabilcarel.composite.internal.CompositeRequestBodyExceptionResolver;
+import io.github.nabilcarel.composite.internal.CompositeRequestSizeAdvice;
+import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.service.*;
@@ -17,6 +20,7 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -44,6 +48,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.util.unit.DataSize;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
@@ -132,18 +137,49 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * Registers the interceptor that verifies the handler selected for each loopback
      * sub-request.
      *
+     * @param loopbackProperties loopback limits
+     * @param marker identifies genuine loopback calls
+     * @param objectMapper the composite object mapper
      * @return the MVC configurer
      */
     @Bean
-    public WebMvcConfigurer compositeDispatchConfigurer(CompositeLoopbackProperties loopbackProperties) {
+    public WebMvcConfigurer compositeDispatchConfigurer(
+            CompositeLoopbackProperties loopbackProperties,
+            DispatchMarker marker,
+            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
         int maxConcurrentHandlers = effectiveMaxConnections(loopbackProperties);
 
         return new WebMvcConfigurer() {
             @Override
             public void addInterceptors(InterceptorRegistry registry) {
-                registry.addInterceptor(new CompositeDispatchInterceptor(maxConcurrentHandlers));
+                registry.addInterceptor(new CompositeDispatchInterceptor(maxConcurrentHandlers, marker));
+            }
+
+            @Override
+            public void extendHandlerExceptionResolvers(List<HandlerExceptionResolver> resolvers) {
+                resolvers.add(0, new CompositeRequestBodyExceptionResolver(objectMapper));
             }
         };
+    }
+
+    /**
+     * Provides the random value that identifies genuine loopback calls.
+     *
+     * @return the dispatch marker
+     */
+    @Bean
+    public DispatchMarker compositeDispatchMarker() {
+        return new DispatchMarker();
+    }
+
+    /**
+     * Enforces {@code composite.max-request-size} while composite bodies are read.
+     *
+     * @return the request body advice
+     */
+    @Bean
+    public CompositeRequestSizeAdvice compositeRequestSizeAdvice() {
+        return new CompositeRequestSizeAdvice(properties);
     }
 
     private int effectiveMaxConnections(CompositeLoopbackProperties loopbackProperties) {
@@ -252,6 +288,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * @param referenceResolver the reference resolver
      * @param authenticationForwardingService the credential forwarding service
      * @param dispatcher the sub-request dispatcher
+     * @param dispatchMarker identifies genuine loopback calls
      * @return the default service
      */
     @Bean
@@ -264,9 +301,10 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
             CompositeRequestValidator validator,
             ReferenceResolverService referenceResolver,
             AuthenticationForwardingService authenticationForwardingService,
-            @Lazy SubRequestDispatcher dispatcher) {
+            @Lazy SubRequestDispatcher dispatcher,
+            DispatchMarker dispatchMarker) {
         return new CompositeRequestServiceImpl(endpointRegistry, objectMapper, responseStore, validator,
-                referenceResolver, properties, authenticationForwardingService, dispatcher);
+                referenceResolver, properties, authenticationForwardingService, dispatcher, dispatchMarker);
     }
 
     /**

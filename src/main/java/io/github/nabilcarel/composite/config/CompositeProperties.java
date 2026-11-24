@@ -89,6 +89,14 @@ public class CompositeProperties {
     private DataSize maxResolvedSize = DataSize.ofMegabytes(1);
 
     /**
+     * Maximum size of a composite request body.
+     *
+     * <p>The limit is enforced while the body is read, including for chunked requests. A larger
+     * request fails with {@code 413} before any sub-request runs. Defaults to {@code 2MB}.
+     */
+    private DataSize maxRequestSize = DataSize.ofMegabytes(2);
+
+    /**
      * Configuration for composite-request tracking headers injected into each sub-request.
      *
      * @see HeaderInjection

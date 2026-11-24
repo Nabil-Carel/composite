@@ -15,6 +15,7 @@ import io.github.nabilcarel.composite.dispatch.PreparedSubRequest;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
 import io.github.nabilcarel.composite.internal.DefaultCancellationSignal;
+import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
@@ -87,6 +88,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     private final CompositeProperties properties;
     private final AuthenticationForwardingService authForwardingService;
     private final SubRequestDispatcher dispatcher;
+    private final DispatchMarker dispatchMarker;
     private volatile ObjectReader jsonResponseReader;
 
     @Override
@@ -171,7 +173,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         if (subRequest.getResolvedHeaders() != null) {
             subRequest.getResolvedHeaders().forEach(headers::set);
         }
-        headers.set(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
+        headers.set(CompositeDispatchInterceptor.DISPATCH_HEADER, dispatchMarker.value());
 
         if (properties.getHeaderInjection().isEnabled()) {
             headers.add(properties.getHeaderInjection().getRequestHeader(), "true");
@@ -180,7 +182,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         }
 
         JsonNode body = supportsRequestBody(subRequest.getMethod())
-                && subRequest.getBody() != null && !subRequest.getBody().isEmpty()
+                && subRequest.getBody() != null
+                && !subRequest.getBody().isNull() && !subRequest.getBody().isMissingNode()
                 ? subRequest.getBody()
                 : null;
         PreparedSubRequest prepared = new PreparedSubRequest(subRequest.getReferenceId(),

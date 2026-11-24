@@ -5,6 +5,7 @@ import static org.openjdk.jcstress.annotations.Expect.FORBIDDEN;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import io.github.nabilcarel.composite.config.CompositeDispatchInterceptor;
+import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.SubRequestForwarder;
 import io.github.nabilcarel.composite.model.ResponseTrackerImpl;
 import io.github.nabilcarel.composite.model.SubRequestCoordinatorImpl;
@@ -43,6 +44,7 @@ public final class CompositeConcurrencyStress {
 
     private static final SubRequestContext CONTEXT = new SubRequestContext(new HttpHeaders(), null);
     private static final HandlerMethod HANDLER = handler();
+    private static final DispatchMarker MARKER = new DispatchMarker();
 
     public static final class Handlers {
         @CompositeEndpoint
@@ -68,7 +70,7 @@ public final class CompositeConcurrencyStress {
 
     private static MockHttpServletRequest loopbackRequest() {
         MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader(CompositeDispatchInterceptor.DISPATCH_HEADER, "true");
+        request.addHeader(CompositeDispatchInterceptor.DISPATCH_HEADER, MARKER.value());
         return request;
     }
 
@@ -347,7 +349,7 @@ public final class CompositeConcurrencyStress {
     @Outcome(expect = FORBIDDEN, desc = "Limit exceeded or both rejected")
     @State
     public static class HandlerLimitAdmitsOne {
-        private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor(1);
+        private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor(1, MARKER);
         private final MockHttpServletRequest firstRequest = loopbackRequest();
         private final MockHttpServletRequest secondRequest = loopbackRequest();
 
@@ -368,7 +370,7 @@ public final class CompositeConcurrencyStress {
     @Outcome(expect = FORBIDDEN, desc = "A permit leaked or was duplicated")
     @State
     public static class HandlerPermitIsConserved {
-        private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor(1);
+        private final CompositeDispatchInterceptor interceptor = new CompositeDispatchInterceptor(1, MARKER);
         private final MockHttpServletRequest holder = loopbackRequest();
         private final MockHttpServletRequest contender = loopbackRequest();
         private boolean admitted;

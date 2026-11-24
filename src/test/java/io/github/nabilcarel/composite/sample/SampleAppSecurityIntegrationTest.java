@@ -686,6 +686,26 @@ class SampleAppSecurityIntegrationTest {
         }
 
         @Test
+        void malformedJson_getsAClearError() throws Exception {
+            ResponseEntity<String> response = post(rest, CUSTOM, bearer(SampleTokens.valid("root", "USER", "ADMIN")),
+                "{not json");
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(JSON.readTree(response.getBody()).at("/errors/0").asText())
+                .contains("not valid composite JSON");
+        }
+
+        @Test
+        void unknownField_getsAClearError() throws Exception {
+            ResponseEntity<String> response = post(rest, CUSTOM, bearer(SampleTokens.valid("root", "USER", "ADMIN")),
+                "{\"allOrNone\":true}");
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(JSON.readTree(response.getBody()).at("/errors/0").asText())
+                .contains("Unknown composite request field: allOrNone");
+        }
+
+        @Test
         void builtInRoute_isGone() {
             ResponseEntity<String> response = post(rest, EXECUTE, bearer(SampleTokens.valid("root", "USER", "ADMIN")),
                 batch(get("me", "/api/me")));

@@ -92,7 +92,8 @@ class CompositeDebugInfoTest {
             referenceResolver,
             properties,
             authForwardingService,
-            new WebClientSubRequestDispatcher(webClient)
+            new WebClientSubRequestDispatcher(webClient),
+            new io.github.nabilcarel.composite.internal.DispatchMarker()
         );
     }
 
