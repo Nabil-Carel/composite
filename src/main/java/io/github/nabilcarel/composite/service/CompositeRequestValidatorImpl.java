@@ -107,11 +107,11 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         }
 
         // Check for missing dependencies
-        for (SubRequestDto request : requests) {
-            for (String dependency : new SubRequest(request).getDependencies()) {
+        for (Map.Entry<String, Set<String>> request : dependencyGraph.entrySet()) {
+            for (String dependency : request.getValue()) {
                 if (!dependencyGraph.containsKey(dependency)) {
                     errors.add("Missing dependency reference: '" + dependency +
-                                    "' for request: " + request.getReferenceId() +
+                                    "' for request: " + request.getKey() +
                                     ". Add a sub-request with that referenceId or fix the placeholder.");
                     log.error(errors.get(errors.size() - 1));
                 }

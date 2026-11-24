@@ -34,7 +34,19 @@ dependencyManagement {
     }
 }
 
+sourceSets {
+    jcstress {
+        java.srcDir 'src/jcstress/java'
+        compileClasspath += sourceSets.main.output + configurations.compileClasspath
+        runtimeClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
 dependencies {
+    jcstressImplementation 'org.openjdk.jcstress:jcstress-core:0.16'
+    jcstressAnnotationProcessor 'org.openjdk.jcstress:jcstress-core:0.16'
+    jcstressImplementation 'org.springframework:spring-test'
+
 	api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-validation'
     api 'org.springframework.boot:spring-boot-starter-webflux'
@@ -98,6 +110,25 @@ tasks.register('jvmProfile', JavaExec) {
         if (project.hasProperty(name)) {
             systemProperty "composite.profile.${name}", project.property(name)
         }
+    }
+}
+
+// Explores thread interleavings in the concurrent core: ./gradlew jcstress -PjcstressMode=default
+tasks.register('jcstress', JavaExec) {
+    description = 'Runs jcstress concurrency tests.'
+    group = 'verification'
+    // jcstress scans every classpath entry and fails on directories that do not exist.
+    classpath = sourceSets.jcstress.runtimeClasspath.filter { it.exists() }
+    mainClass = 'org.openjdk.jcstress.Main'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    def reportDir = layout.buildDirectory.dir('reports/jcstress').get().asFile
+    workingDir = reportDir
+    args '-m', project.findProperty('jcstressMode') ?: 'quick', '-r', reportDir.path
+    if (project.hasProperty('jcstressTests')) {
+        args '-t', project.property('jcstressTests')
+    }
+    doFirst {
+        reportDir.mkdirs()
     }
 }
 

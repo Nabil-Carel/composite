@@ -118,9 +118,10 @@ public final class SubRequestTarget {
         }
 
         try {
-            String rendered = ReferenceTemplate.parse(url).render(expression -> ROUTE_PLACEHOLDER);
-            if (rendered.indexOf('#') >= 0 || rendered.indexOf('\\') >= 0
-                    || rendered.chars().anyMatch(Character::isISOControl)) {
+            String rendered = url.contains("${")
+                    ? ReferenceTemplate.parse(url).render(expression -> ROUTE_PLACEHOLDER)
+                    : url;
+            if (rendered.indexOf('#') >= 0 || rendered.indexOf('\\') >= 0 || hasControlCharacter(rendered)) {
                 return Optional.empty();
             }
 
@@ -168,8 +169,7 @@ public final class SubRequestTarget {
             if (token.reference()) {
                 hasReference = true;
                 String value = values.apply(token.text());
-                if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0
-                        || value.chars().anyMatch(Character::isISOControl)) {
+                if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 || hasControlCharacter(value)) {
                     throw new IllegalArgumentException(
                             "Value of ${" + token.text() + "} cannot be used in a URL path because it contains "
                                     + "'/', '\\' or a control character.");
@@ -179,7 +179,7 @@ public final class SubRequestTarget {
             } else {
                 encoded.append(encodeLiteral(token.text(),
                         text -> UriUtils.encodePathSegment(text, StandardCharsets.UTF_8)));
-                decoded.append(UriUtils.decode(token.text(), StandardCharsets.UTF_8));
+                decoded.append(decode(token.text()));
             }
         }
 
@@ -205,7 +205,7 @@ public final class SubRequestTarget {
 
     private static void validateEscapes(List<Token> tokens, String url, boolean path) {
         for (Token token : tokens) {
-            if (token.reference()) {
+            if (token.reference() || token.text().indexOf('%') < 0) {
                 continue;
             }
 
@@ -235,13 +235,26 @@ public final class SubRequestTarget {
             if (segments[i].isEmpty() && i < segments.length - 1) {
                 return false;
             }
-            String decoded = UriUtils.decode(segments[i], StandardCharsets.UTF_8);
+            String decoded = decode(segments[i]);
             if (isDotSegment(decoded) || decoded.indexOf('/') >= 0 || decoded.indexOf('\\') >= 0
-                    || decoded.chars().anyMatch(Character::isISOControl)) {
+                    || hasControlCharacter(decoded)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static String decode(String text) {
+        return text.indexOf('%') < 0 ? text : UriUtils.decode(text, StandardCharsets.UTF_8);
+    }
+
+    private static boolean hasControlCharacter(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.isISOControl(text.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isDotSegment(String segment) {

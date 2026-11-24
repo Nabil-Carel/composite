@@ -121,26 +121,29 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         }
 
         PathContainer container = PathContainer.parsePath(path.get());
-        List<Route> matches = routesByMethod.getOrDefault(method.toUpperCase(Locale.ROOT), List.of()).stream()
-                .filter(route -> route.pattern().matches(container))
-                .toList();
+        PathPattern mostSpecific = null;
+        EndpointInfo selected = null;
+        boolean unannotated = false;
 
-        if (matches.isEmpty()) {
-            return Optional.empty();
+        for (Route route : routesByMethod.getOrDefault(method.toUpperCase(Locale.ROOT), List.of())) {
+            if (!route.pattern().matches(container)) {
+                continue;
+            }
+
+            int comparison = mostSpecific == null
+                    ? -1
+                    : PathPattern.SPECIFICITY_COMPARATOR.compare(route.pattern(), mostSpecific);
+
+            if (comparison < 0) {
+                mostSpecific = route.pattern();
+                selected = route.endpoint();
+                unannotated = route.endpoint() == null;
+            } else if (comparison == 0) {
+                unannotated |= route.endpoint() == null;
+            }
         }
 
-        PathPattern mostSpecific = matches.stream()
-                .map(Route::pattern)
-                .min(PathPattern.SPECIFICITY_COMPARATOR)
-                .orElseThrow();
-        List<Route> selected = matches.stream()
-                .filter(route -> PathPattern.SPECIFICITY_COMPARATOR.compare(route.pattern(), mostSpecific) == 0)
-                .toList();
-
-        if (selected.stream().anyMatch(route -> route.endpoint() == null)) {
-            return Optional.empty();
-        }
-        return Optional.of(selected.get(0).endpoint());
+        return mostSpecific == null || unannotated ? Optional.empty() : Optional.of(selected);
     }
 
     public Set<EndpointInfo> getAvailableEndpoints() {

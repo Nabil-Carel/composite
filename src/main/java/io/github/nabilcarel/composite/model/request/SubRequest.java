@@ -67,6 +67,11 @@ public class SubRequest {
      */
     private Set<String> dependencies = new HashSet<>();
 
+    /** Tracks extraction separately because a sub-request can legitimately have no dependencies. */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private boolean dependenciesExtracted;
+
     /**
      * Structural pointers into the body {@link com.fasterxml.jackson.databind.JsonNode} tree
      * that contain placeholder expressions, used by the reference resolver to perform
@@ -84,13 +89,24 @@ public class SubRequest {
      * @return an unmodifiable view of the dependency reference IDs; never {@code null}
      */
     public Set<String> getDependencies() {
-        if(dependencies.isEmpty()) {
+        if (!dependenciesExtracted) {
             extractDependenciesFromUrl();
             extractDependenciesFromHeaders();
             extractDependenciesFromBody(subRequestDto.getBody());
+            dependenciesExtracted = true;
         }
 
         return dependencies;
+    }
+
+    /**
+     * Replaces the dependency set and skips placeholder extraction.
+     *
+     * @param dependencies the reference IDs this sub-request depends on
+     */
+    public void setDependencies(Set<String> dependencies) {
+        this.dependencies = dependencies;
+        this.dependenciesExtracted = true;
     }
 
     private void extractDependenciesFromUrl() {

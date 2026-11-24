@@ -88,6 +88,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
     private final AuthenticationForwardingService authForwardingService;
     @Qualifier("compositeWebClient")
     private final WebClient webClient;
+    private volatile ObjectReader jsonResponseReader;
 
     public Mono<Void> forwardSubrequest(
             SubRequest subRequest,
@@ -300,7 +301,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
         }
 
         try {
-            return builder.body(JSON_RESPONSE_OPTIONS.apply(objectMapper.reader()).readTree(text)).build();
+            return builder.body(jsonResponseReader().readTree(text)).build();
         } catch (JsonProcessingException e) {
             log.warn("Sub-request {} returned invalid JSON", referenceId);
             return builder
@@ -308,6 +309,16 @@ public class CompositeRequestServiceImpl implements CompositeRequestService{
                     .body("Response body is not valid JSON, although its Content-Type says it is. Fix the endpoint response.")
                     .build();
         }
+    }
+
+    /** Readers are immutable and thread-safe, so one instance serves every response. */
+    private ObjectReader jsonResponseReader() {
+        ObjectReader reader = jsonResponseReader;
+        if (reader == null) {
+            reader = JSON_RESPONSE_OPTIONS.apply(objectMapper.reader());
+            jsonResponseReader = reader;
+        }
+        return reader;
     }
 
     private static boolean isJson(MediaType contentType) {
