@@ -107,7 +107,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         );
 
         if (endpointInfo.isEmpty()) {
-            log.error("Invalid endpoint received: {}", subRequest.getUrl());
+            log.debug("Sub-request {} rejected: no composite endpoint matches", subRequest.getReferenceId());
             recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Invalid endpoint received: " + subRequest.getUrl()
@@ -128,7 +128,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
             referenceResolver.resolveHeaders(subRequest, batch.responses());
             referenceResolver.resolveBody(subRequest, batch.responses());
         } catch (Exception e) {
-            log.error("Reference resolution failed for {}: {}", subRequest.getReferenceId(), e.getMessage(), e);
+            log.debug("Reference resolution failed for sub-request {}", subRequest.getReferenceId(), e);
             recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Reference resolution failed: " + resolutionFailureMessage(e));
@@ -154,8 +154,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         );
 
         if (resolvedEndpointInfo.isEmpty()) {
-            log.error("Resolved URL does not match registered endpoint: {} (original: {})",
-                    resolvedUrl, subRequest.getUrl());
+            log.debug("Sub-request {} rejected: its resolved URL matches no composite endpoint",
+                    subRequest.getReferenceId());
             recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(),
                     "Resolved URL does not match a registered endpoint: " + resolvedUrl
@@ -166,17 +166,19 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         String error = compositeRequestValidator.validateResolvedUrlFormat(resolvedUrl);
 
         if (error != null) {
-            log.error("Invalid URL format: {}", error);
+            log.debug("Sub-request {} rejected: invalid resolved URL", subRequest.getReferenceId());
             recordError(batch, subRequest.getReferenceId(),
                     HttpStatus.BAD_REQUEST.value(), error);
             return Mono.empty();
         }
 
         HttpHeaders headers = new HttpHeaders();
-        headers.addAll(context.forwardedHeaders());
         if (subRequest.getResolvedHeaders() != null) {
             subRequest.getResolvedHeaders().forEach(headers::set);
         }
+        // Validation already refuses client copies of forwarded headers. Applying these last
+        // keeps the outer request's credentials authoritative even if that check is bypassed.
+        context.forwardedHeaders().forEach(headers::put);
         headers.set(CompositeDispatchInterceptor.DISPATCH_HEADER, dispatchMarker.value());
 
         if (properties.getHeaderInjection().isEnabled()) {
@@ -216,7 +218,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                     batch.addResponse(subRequest.getReferenceId(), subResponse);
                 })
                 .onErrorResume(throwable -> {
-                    log.error("Error forwarding subrequest {}: {}", subRequest.getReferenceId(), throwable.getMessage(), throwable);
+                    // One line per failure: a stack trace for every call would flood the log under load.
+                    log.warn("Sub-request {} failed in transport: {}", subRequest.getReferenceId(),
+                            throwable.getClass().getSimpleName());
+                    log.debug("Transport failure for sub-request {}", subRequest.getReferenceId(), throwable);
                     recordedStatus.set(HttpStatus.SERVICE_UNAVAILABLE.value());
                     recordError(batch, subRequest.getReferenceId(),
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
@@ -318,7 +323,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         if (status.isError()) {
             String errorBody = result.body() == null ? "" : result.body();
-            log.error("Error from subrequest: {} - {}", status, errorBody);
+            // Error responses are normal results and their bodies can hold application details.
+            log.debug("Sub-request {} returned {}", referenceId, status.value());
             return builder.body(errorBody).build();
         }
 

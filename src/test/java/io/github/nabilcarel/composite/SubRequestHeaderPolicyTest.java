@@ -46,6 +46,14 @@ class SubRequestHeaderPolicyTest {
     }
 
     @Test
+    void forwardedHeader_overridesTheAllowlist() {
+        properties.getSecurity().setForwardedHeaders(List.of("Authorization", "X-API-Key"));
+        properties.getSecurity().setClientAllowedHeaders(List.of("X-API-Key"));
+
+        assertThat(SubRequestHeaderPolicy.isClientHeaderAllowed("x-api-key", properties)).isFalse();
+    }
+
+    @Test
     void customTrackingHeaderNames_areBlocked() {
         properties.getHeaderInjection().setRequestIdHeader("X-Batch-Id");
         properties.getSecurity().setClientAllowedHeaders(List.of("X-Batch-Id"));

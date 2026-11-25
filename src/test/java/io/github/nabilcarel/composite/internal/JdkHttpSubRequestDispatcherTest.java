@@ -151,9 +151,11 @@ class JdkHttpSubRequestDispatcherTest {
         CompletableFuture<DispatchResult> queued = dispatcher.dispatch(request("/ok"), cancellation)
                 .toCompletableFuture();
         assertThat(queued).isNotDone();
+        assertThat(dispatcher.waitingCount()).isEqualTo(1);
 
         cancellation.cancel();
         assertThat(queued).isCancelled();
+        assertThat(dispatcher.waitingCount()).isZero();
 
         releaseHang.countDown();
         assertThat(hanging.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);

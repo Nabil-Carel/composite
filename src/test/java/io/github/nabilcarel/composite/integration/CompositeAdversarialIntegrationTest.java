@@ -85,7 +85,8 @@ class CompositeAdversarialIntegrationTest {
     )
     @TestPropertySource(properties = {
         "composite.security.forwarded-headers=Authorization,Cookie,X-API-Key",
-        "composite.security.client-allowed-headers=X-Trace,X-User-Id,Accept-Language",
+        // X-API-Key is also client-allowed on purpose: forwarding must still win.
+        "composite.security.client-allowed-headers=X-Trace,X-User-Id,Accept-Language,X-API-Key",
         "composite.security.blocked-headers=X-User-Id"
     })
     class HeaderForwarding {
@@ -96,6 +97,27 @@ class CompositeAdversarialIntegrationTest {
         @BeforeEach
         void reset() {
             TestAdversarialController.reset();
+        }
+
+        @Test
+        void clientCannotReplaceAForwardedCredential_evenIfAllowlisted() throws Exception {
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-API-Key", "caller-key");
+
+            ResponseEntity<String> response = post(rest, headers,
+                batch(sub("a", "GET", "/api/adv/headers", "\"headers\":{\"X-API-Key\":\"other-key\"}")));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(response.getBody()).contains("Header not allowed on a sub-request: X-API-Key");
+            assertThat(TestAdversarialController.lastHeaders).isNull();
+        }
+
+        @Test
+        void clientCannotAddAForwardedCredential_theCallerDidNotSend() {
+            ResponseEntity<String> response = post(rest,
+                batch(sub("a", "GET", "/api/adv/headers", "\"headers\":{\"x-api-key\":\"other-key\"}")));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         }
 
         @Test
@@ -229,6 +251,9 @@ class CompositeAdversarialIntegrationTest {
             "/api/adv/items/hidden",
             "/api/adv/items/%68idden",
             "/api/adv/items/%252e%252e/hidden",
+            "/api/adv/items/%25252e%25252e/hidden",
+            "/api/adv/items/..%252fhidden",
+            "/api/adv/items/..%255chidden",
             "/api/adv/items/%00",
             "/api/adv/items/%c0%ae%c0%ae/hidden",
             "/api/adv/items/%ef%bc%8e%ef%bc%8e/hidden",

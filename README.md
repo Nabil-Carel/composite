@@ -134,12 +134,14 @@ Use these for auditing and logging only. A direct client can send the same heade
 
 - Targets must be application-relative paths. Absolute URLs, `//host`, dot segments, fragments and path parameters are rejected.
 - A sub-request runs only if the handler Spring selects has `@CompositeEndpoint`.
-- Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused.
+- Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused, and so is any header on `composite.security.forwarded-headers`, so a caller cannot swap in another credential for one sub-request.
+- Forwarded headers are copied exactly as the caller sent them. Forward only credentials. If your app trusts a header such as `X-Forwarded-For` because a proxy sets it, forwarding it lets callers' values through unchecked.
 - Response values are substituted once, so stored data cannot act as a `${...}` reference.
 - Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
 - The caller stays authenticated for the async batch response when the app uses Spring Security's default security context repositories. A custom `SecurityContextRepository` must support async dispatches.
 - A gateway only sees the outer composite URL. Protect annotated endpoints with application-level authorization rather than relying only on gateway path rules.
 - Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
+- At `INFO` and above, Composite logs reference IDs, statuses and failure types, never sub-request URLs, headers or response bodies. Rejected requests and error responses are logged at `DEBUG`, where validation messages can include the submitted URL.
 
 ## Installation
 

@@ -87,11 +87,21 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
     @Override
     public CompletionStage<DispatchResult> dispatch(PreparedSubRequest request, CancellationSignal cancellation) {
         CompletableFuture<DispatchResult> result = new CompletableFuture<>();
-        // A call cancelled while queued completes at once and gives up its turn when it is reached.
-        cancellation.onCancel(() -> result.cancel(false));
-        waiting.add(() -> send(request, cancellation, result));
+        Runnable task = () -> send(request, cancellation, result);
+        waiting.add(task);
+        // A call cancelled while queued completes at once and leaves the queue, so it holds
+        // no memory. If it was already taken, send() sees the cancellation and skips it.
+        cancellation.onCancel(() -> {
+            result.cancel(false);
+            waiting.remove(task);
+        });
         drain();
         return result;
+    }
+
+    /** Calls waiting for a connection. Visible for tests. */
+    int waitingCount() {
+        return waiting.size();
     }
 
     @Override

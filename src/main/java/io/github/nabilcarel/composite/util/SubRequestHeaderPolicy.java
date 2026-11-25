@@ -12,6 +12,8 @@ import lombok.experimental.UtilityClass;
  * proxy, identity, hop-by-hop and composite tracking headers are always refused, even if
  * they are listed, because an edge proxy cannot inspect or strip headers inside a batch.
  * Credentials reach sub-requests only through {@code composite.security.forwarded-headers}.
+ * Headers on that list are refused from clients too, so a custom credential header such as
+ * {@code X-API-Key} cannot be replaced for a single sub-request.
  *
  * @since 0.0.1
  */
@@ -48,7 +50,9 @@ public class SubRequestHeaderPolicy {
                 || name.equals(normalize(tracking.getRequestIdHeader()))
                 || name.equals(normalize(tracking.getSubRequestIdHeader()))
                 || properties.getSecurity().getBlockedHeaders().stream()
-                        .anyMatch(blocked -> name.equals(normalize(blocked)))) {
+                        .anyMatch(blocked -> name.equals(normalize(blocked)))
+                || properties.getSecurity().getForwardedHeaders().stream()
+                        .anyMatch(forwarded -> name.equals(normalize(forwarded)))) {
             return false;
         }
 
