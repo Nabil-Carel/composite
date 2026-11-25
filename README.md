@@ -152,6 +152,8 @@ To try it out, you need to build and install the artifact locally or include the
 
 Official release and simplified installation instructions will be provided in a future version.
 
+Composite needs Java 17 or later, Spring Boot 3 with Spring MVC, and Spring MVC's default path matching. An application that sets `spring.mvc.pathmatch.matching-strategy=ant_path_matcher` fails at startup with a message explaining the setting.
+
 ## Usage
 
 ### 1. Annotate your endpoints

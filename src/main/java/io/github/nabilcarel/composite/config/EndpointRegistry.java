@@ -61,6 +61,7 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         PathPatternParser parser = handlerMapping.getPatternParser() != null
                 ? handlerMapping.getPatternParser()
                 : PathPatternParser.defaultInstance;
+        List<String> antMatched = new ArrayList<>();
 
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMapping.getHandlerMethods().entrySet()) {
             RequestMappingInfo mapping = entry.getKey();
@@ -69,8 +70,7 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
 
             if (pathCondition == null) {
                 if (annotation != null) {
-                    log.warn("Composite endpoint {} ignored: only PathPattern matching is supported",
-                            entry.getValue());
+                    antMatched.add(entry.getValue().toString());
                 }
                 continue;
             }
@@ -92,6 +92,15 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
                     routes.computeIfAbsent(method, key -> new ArrayList<>()).add(new Route(pattern, relaxed, info));
                 }
             }
+        }
+
+        // Starting anyway would reject every sub-request, which looks like a routing bug.
+        if (!antMatched.isEmpty()) {
+            throw new IllegalStateException("""
+                    Composite endpoints need Spring MVC path patterns, but this application matches \
+                    paths with AntPathMatcher, usually because of \
+                    spring.mvc.pathmatch.matching-strategy=ant_path_matcher. Remove that setting or set \
+                    it to path_pattern_parser. Affected handlers: %s""".formatted(String.join(", ", antMatched)));
         }
 
         routesByMethod = Map.copyOf(routes);

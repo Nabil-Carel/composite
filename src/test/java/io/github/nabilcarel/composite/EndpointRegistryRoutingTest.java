@@ -58,6 +58,32 @@ class EndpointRegistryRoutingTest {
     }
 
     @Test
+    void antPathMatching_failsAtStartupWithAClearMessage() throws Exception {
+        RequestMappingInfo.BuilderConfiguration ant = new RequestMappingInfo.BuilderConfiguration();
+        ant.setPathMatcher(new org.springframework.util.AntPathMatcher());
+        mappings.put(RequestMappingInfo.paths("/users/{id}").methods(get()).options(ant).build(),
+            new HandlerMethod(new Handlers(), Handlers.class.getMethod("annotated")));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(this::discover)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("spring.mvc.pathmatch.matching-strategy=ant_path_matcher")
+            .hasMessageContaining("annotated");
+    }
+
+    @Test
+    void antPathMatching_onlyForUnannotatedHandlers_isIgnored() throws Exception {
+        RequestMappingInfo.BuilderConfiguration ant = new RequestMappingInfo.BuilderConfiguration();
+        ant.setPathMatcher(new org.springframework.util.AntPathMatcher());
+        mappings.put(RequestMappingInfo.paths("/legacy").methods(get()).options(ant).build(),
+            new HandlerMethod(new Handlers(), Handlers.class.getMethod("plain")));
+        map("annotated", get(), "/users/{id}");
+
+        discover();
+
+        assertThat(allowed("GET", "/users/42")).isTrue();
+    }
+
+    @Test
     void regexConstrainedVariable_acceptsAReference_butChecksTheRenderedValue() throws Exception {
         map("annotated", get(), "/orders/{id:\\d+}");
         discover();
