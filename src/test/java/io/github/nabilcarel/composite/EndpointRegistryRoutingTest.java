@@ -58,6 +58,27 @@ class EndpointRegistryRoutingTest {
     }
 
     @Test
+    void regexConstrainedVariable_acceptsAReference_butChecksTheRenderedValue() throws Exception {
+        map("annotated", get(), "/orders/{id:\\d+}");
+        discover();
+
+        assertThat(allowed("GET", "/orders/${a.id}")).isTrue();
+        assertThat(allowed("GET", "/orders/42")).isTrue();
+        assertThat(allowed("GET", "/orders/abc")).isFalse();
+    }
+
+    @Test
+    void templateCannotSlipPastAnUnannotatedRouteThatDiffersOnlyByRegex() throws Exception {
+        map("annotated", get(), "/orders/{id:\\d+}");
+        map("plain", get(), "/orders/{code:[a-z]+}");
+        discover();
+
+        assertThat(allowed("GET", "/orders/${a.id}")).isFalse();
+        assertThat(allowed("GET", "/orders/42")).isTrue();
+        assertThat(allowed("GET", "/orders/abc")).isFalse();
+    }
+
+    @Test
     void moreSpecificUnannotatedRoute_winsAndIsRejected() throws Exception {
         map("annotated", get(), "/users/{id}");
         map("plain", get(), "/users/me");

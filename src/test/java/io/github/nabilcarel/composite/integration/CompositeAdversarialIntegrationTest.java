@@ -303,6 +303,20 @@ class CompositeAdversarialIntegrationTest {
         }
 
         @Test
+        void referenceInRegexConstrainedVariable_isAccepted_andTheValueIsChecked() throws Exception {
+            JsonNode response = json(post(rest, batch(
+                get("a", "/api/adv/numbered/7"),
+                get("b", "/api/adv/numbered/${a.id}"),
+                get("v", "/api/adv/values"),
+                get("c", "/api/adv/numbered/${v.hidden}"))));
+
+            assertThat(status(response, "b")).isEqualTo(200);
+            assertThat(response.at("/responses/b/body/id").asLong()).isEqualTo(7);
+            assertThat(status(response, "c")).isEqualTo(400);
+            assertThat(TestAdversarialController.HIDDEN_CALLS).hasValue(0);
+        }
+
+        @Test
         void hostileValue_inQuery_cannotAddParameters() throws Exception {
             JsonNode response = json(post(rest, batch(
                 get("v", "/api/adv/values"),
