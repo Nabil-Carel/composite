@@ -194,7 +194,9 @@ class CompositeExecutionLimitsIntegrationTest {
     )
     @TestPropertySource(properties = {
         "composite.max-concurrent-sub-requests=1",
-        "composite.request-timeout=900ms"
+        "composite.request-timeout=900ms",
+        // Longer than the batch deadline, so only the batch timeout can fire first.
+        "composite.sub-request-timeout=30s"
     })
     class QueuedWork {
 
@@ -225,7 +227,7 @@ class CompositeExecutionLimitsIntegrationTest {
         classes = CompositeIntegrationTestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
     )
-    @TestPropertySource(properties = "composite.request-timeout=900ms")
+    @TestPropertySource(properties = {"composite.request-timeout=900ms", "composite.sub-request-timeout=30s"})
     class ClientDisconnect {
 
         @LocalServerPort

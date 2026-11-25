@@ -37,7 +37,7 @@ import org.springframework.test.context.TestPropertySource;
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
 )
 @Import(CompositeExtensionIntegrationTest.DispatcherConfiguration.class)
-@TestPropertySource(properties = "composite.request-timeout=700ms")
+@TestPropertySource(properties = {"composite.request-timeout=700ms", "composite.sub-request-timeout=30s"})
 class CompositeExtensionIntegrationTest {
 
     private static final List<PreparedSubRequest> REQUESTS = new CopyOnWriteArrayList<>();

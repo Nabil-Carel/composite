@@ -128,7 +128,8 @@ class CompositeJfrEventsIntegrationTest {
         classes = CompositeIntegrationTestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
     )
-    @TestPropertySource(properties = "composite.request-timeout=500ms")
+    // The sub-request timeout is longer than the batch deadline, so only the batch can time out.
+    @TestPropertySource(properties = {"composite.request-timeout=500ms", "composite.sub-request-timeout=30s"})
     class Timeouts {
 
         @Autowired

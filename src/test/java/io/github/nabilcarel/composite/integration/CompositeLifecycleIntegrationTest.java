@@ -150,6 +150,8 @@ class CompositeLifecycleIntegrationTest {
     )
     @TestPropertySource(properties = {
         "composite.request-timeout=900ms",
+        // Longer than the batch deadline, so only the batch timeout can fire first.
+        "composite.sub-request-timeout=30s",
         "spring.mvc.async.request-timeout=200ms"
     })
     class Timeouts {
