@@ -5,20 +5,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
-import java.net.Socket;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.SecureRandom;
-import java.security.cert.X509Certificate;
+import java.security.KeyStore;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509ExtendedTrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -64,11 +61,11 @@ class CompositeHttpsIntegrationTest {
         registry.add("composite.loopback.protocol", () -> "https");
     }
 
-    /** The test client trusts the throwaway certificate. Library trust is what is under test. */
+    /**
+     * The test client trusts only the throwaway certificate. Library trust is what is under test.
+     */
     private static JsonNode execute(int port) throws Exception {
-        SSLContext context = SSLContext.getInstance("TLS");
-        context.init(null, new TrustManager[] {new TrustAll()}, new SecureRandom());
-        HttpClient client = HttpClient.newBuilder().sslContext(context).build();
+        HttpClient client = HttpClient.newBuilder().sslContext(clientTrustingTestCertificate()).build();
         String body = "{\"subRequests\":[{\"referenceId\":\"a\",\"method\":\"GET\",\"url\":\"/api/sec/secret\"}]}";
 
         HttpResponse<String> response = client.send(
@@ -131,13 +128,19 @@ class CompositeHttpsIntegrationTest {
         }
     }
 
-    private static final class TrustAll extends X509ExtendedTrustManager {
-        @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
-        @Override public void checkServerTrusted(X509Certificate[] chain, String authType) { }
-        @Override public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) { }
-        @Override public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) { }
-        @Override public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) { }
-        @Override public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) { }
-        @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+    private static SSLContext clientTrustingTestCertificate() throws Exception {
+        KeyStore serverKeys = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(KEYSTORE)) {
+            serverKeys.load(in, PASSWORD.toCharArray());
+        }
+        KeyStore trusted = KeyStore.getInstance(KeyStore.getDefaultType());
+        trusted.load(null, null);
+        trusted.setCertificateEntry("server", serverKeys.getCertificate("server"));
+
+        TrustManagerFactory trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        trust.init(trusted);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(null, trust.getTrustManagers(), null);
+        return context;
     }
 }
