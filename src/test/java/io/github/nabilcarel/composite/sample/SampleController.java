@@ -160,7 +160,10 @@ public class SampleController {
     @CompositeEndpoint
     @GetMapping("/set-cookie")
     public Map<String, Object> setCookie(HttpServletResponse response) {
-        response.addCookie(new Cookie("SUB_REQUEST_COOKIE", "must-not-reach-client"));
+        Cookie cookie = new Cookie("SUB_REQUEST_COOKIE", "must-not-reach-client");
+        cookie.setSecure(true);
+        cookie.setHttpOnly(true);
+        response.addCookie(cookie);
         response.setHeader("X-Sub-Request-Secret", "must-not-reach-client");
         return Map.of("ok", true);
     }
