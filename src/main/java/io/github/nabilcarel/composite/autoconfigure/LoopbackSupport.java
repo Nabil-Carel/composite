@@ -10,6 +10,7 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.thread.Threading;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.env.Environment;
 import org.springframework.util.unit.DataSize;
 
@@ -58,10 +59,18 @@ final class LoopbackSupport {
     }
 
     /**
-     * Builds a TLS context that accepts any certificate and skips host name checks, for
-     * {@code composite.loopback.trust-self-signed-certificates=true}.
+     * Builds a TLS context that accepts any certificate and skips host name checks.
+     *
+     * <p><strong>Insecure, for development and tests only.</strong> Used only when
+     * {@code composite.loopback.trust-self-signed-certificates=true}, which is disabled by
+     * default, and only for HTTPS loopback calls to this application's own server. Anything
+     * able to intercept local traffic could then read or change those calls, including the
+     * forwarded credentials. {@link #warnIfTrustingAllCertificates} logs a warning at startup
+     * whenever the option is on. In production, add the server certificate to the JVM
+     * truststore instead.
      */
     static SSLContext trustAllSslContext() {
+        // Deliberately accepts every certificate. See the warning above.
         X509ExtendedTrustManager trustAll = new X509ExtendedTrustManager() {
             @Override
             public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {
@@ -117,15 +126,45 @@ final class LoopbackSupport {
                     Attempting to proceed, but connections will likely fail.""");
         }
 
-        if (loopbackProperties.isTrustSelfSignedCertificates()) {
-            log.warn("Composite loopback is configured to trust self-signed certificates. "
-                    + "This should only be used in development/testing environments.");
-        } else {
+        // Trusting every certificate is warned about at startup by warnIfTrustingAllCertificates.
+        if (!loopbackProperties.isTrustSelfSignedCertificates()) {
             log.info("""
                     Composite loopback using HTTPS with default truststore.
                     If using self-signed certificates, either:
                       - Import your certificate into the JVM truststore (recommended for production)
                       - Or set composite.loopback.trust-self-signed-certificates=true (dev/test only)""");
         }
+    }
+
+    /**
+     * Logs a warning when {@code composite.loopback.trust-self-signed-certificates} is on. Runs
+     * at startup because the HTTP clients are created on the first batch.
+     *
+     * @param environment the application environment
+     * @return whether the option is on
+     */
+    static boolean warnIfTrustingAllCertificates(Environment environment) {
+        Binder binder = Binder.get(environment);
+        boolean trustAll = binder.bind("composite.loopback.trust-self-signed-certificates", Boolean.class)
+                .orElse(false);
+        if (!trustAll) {
+            return false;
+        }
+
+        boolean https = "https".equalsIgnoreCase(
+                binder.bind("composite.loopback.protocol", String.class).orElse("http"));
+        if (https) {
+            log.warn("""
+                    composite.loopback.trust-self-signed-certificates is enabled: loopback calls accept \
+                    any certificate and skip host name checks. This is insecure and meant for development \
+                    and tests only. In production, add the server certificate to the JVM truststore and \
+                    remove this setting.""");
+        } else {
+            log.warn("""
+                    composite.loopback.trust-self-signed-certificates is enabled but has no effect, because \
+                    composite.loopback.protocol is not https. Remove the setting. It is meant for \
+                    development and tests only.""");
+        }
+        return true;
     }
 }

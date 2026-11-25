@@ -81,13 +81,15 @@ public final class CompositeLoopbackProperties {
     private String protocol = "http";
 
     /**
-     * Whether to trust self-signed SSL certificates when {@link #protocol} is {@code https}.
+     * Whether loopback calls accept any certificate when {@link #protocol} is {@code https}.
      *
-     * <p><strong>Warning:</strong> enabling this option bypasses certificate chain
-     * validation and should only be used in development or testing environments. For
-     * production, import your server certificate into the JVM truststore instead.
-     * Defaults to {@code false}.
+     * <p><strong>Insecure, for development and tests only.</strong> Disabled by default.
+     * When enabled, loopback calls skip certificate and host name checks entirely, so
+     * anything able to intercept local traffic could read or change them, including the
+     * forwarded credentials. A warning is logged at startup while it is on. In production,
+     * add your server certificate to the JVM truststore instead.
      */
+    // Off by default. Enabling it is logged as a warning at startup.
     private boolean trustSelfSignedCertificates = false;
 
     /**
