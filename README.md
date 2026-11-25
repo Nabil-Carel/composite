@@ -273,6 +273,8 @@ SubRequestDispatcher customDispatcher() {
 
 A dispatcher must only call the current application and must not follow redirects.
 
+To expose batches from your own controller, set `composite.controller.enabled=false` and accept a `@RequestBody CompositeRequest`. Composite answers unreadable bodies on such handlers with its own error format. An `@ExceptionHandler` for `HttpMessageNotReadableException` declared on that controller replaces it, but a global `@ControllerAdvice` does not, so a global handler for unreadable bodies cannot change the composite error format.
+
 ### 7. Observe it with Java Flight Recorder
 
 The library emits `io.github.nabilcarel.composite.Batch` and `io.github.nabilcarel.composite.SubRequest` JFR events. They include timing, status, outcome and the route pattern, but never resolved URLs, headers or bodies.

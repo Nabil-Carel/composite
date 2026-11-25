@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -19,6 +21,7 @@ import org.springframework.lang.NonNull;
 import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 import org.springframework.web.servlet.ModelAndView;
 
@@ -27,10 +30,16 @@ import org.springframework.web.servlet.ModelAndView;
  *
  * <p>Only handlers with a {@code @RequestBody CompositeRequest} parameter are affected, and
  * parser messages are never returned because they can echo request content.
+ *
+ * <p>A custom controller that declares its own {@code @ExceptionHandler} for the exception
+ * keeps it: this resolver steps aside. A {@code @ControllerAdvice} does not take precedence,
+ * because many applications handle unreadable bodies globally, for example with problem
+ * details, and that would silently change the composite error format.
  */
 @Slf4j
 public final class CompositeRequestBodyExceptionResolver implements HandlerExceptionResolver {
 
+    private final Map<Class<?>, ExceptionHandlerMethodResolver> controllerHandlers = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
 
     public CompositeRequestBodyExceptionResolver(ObjectMapper objectMapper) {
@@ -41,7 +50,9 @@ public final class CompositeRequestBodyExceptionResolver implements HandlerExcep
     @Nullable
     public ModelAndView resolveException(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
                                          @Nullable Object handler, @NonNull Exception exception) {
-        if (!(exception instanceof HttpMessageNotReadableException) || !readsCompositeRequest(handler)) {
+        if (!(exception instanceof HttpMessageNotReadableException)
+                || !readsCompositeRequest(handler)
+                || handledByController((HandlerMethod) handler, exception)) {
             return null;
         }
 
@@ -67,6 +78,13 @@ public final class CompositeRequestBodyExceptionResolver implements HandlerExcep
         return handler instanceof HandlerMethod method && Arrays.stream(method.getMethodParameters())
                 .anyMatch(parameter -> parameter.getParameterType() == CompositeRequest.class
                         && parameter.hasParameterAnnotation(RequestBody.class));
+    }
+
+    /** Whether the controller class itself declares an {@code @ExceptionHandler} for the exception. */
+    private boolean handledByController(HandlerMethod handler, Exception exception) {
+        return controllerHandlers
+                .computeIfAbsent(handler.getBeanType(), ExceptionHandlerMethodResolver::new)
+                .resolveMethodByThrowable(exception) != null;
     }
 
     private static boolean hasCause(Throwable failure, Class<? extends Throwable> type) {
