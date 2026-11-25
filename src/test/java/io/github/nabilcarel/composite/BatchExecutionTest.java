@@ -257,6 +257,18 @@ class BatchExecutionTest {
     }
 
     @Test
+    void resultAfterCancel_isIgnoredAndCannotCompleteTheBatch() {
+        BatchExecution batch = batch(request("a"));
+        batch.start();
+        batch.cancel();
+
+        batch.addResponse("a", response("a", 200));
+
+        assertThat(batch.responses()).isEmpty();
+        assertThat(batch.future()).isNotDone();
+    }
+
+    @Test
     void dispatchFailure_isRecorded_andDoesNotStrandQueuedWork() {
         calls.failing.add("a");
         BatchExecution batch = batch(1, false, request("a"), request("b"));

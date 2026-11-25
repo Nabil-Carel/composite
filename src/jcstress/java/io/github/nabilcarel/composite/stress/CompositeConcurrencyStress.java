@@ -194,6 +194,37 @@ public final class CompositeConcurrencyStress {
     }
 
     @JCStressTest
+    @Description("Cancellation is terminal: a racing result is either recorded before it or ignored.")
+    @Outcome(id = "1, 1", expect = ACCEPTABLE, desc = "Result recorded and batch completed before cancel")
+    @Outcome(id = "0, 0", expect = ACCEPTABLE, desc = "Cancel won and the result was ignored")
+    @Outcome(expect = FORBIDDEN, desc = "Result recorded without completing, or completed without it")
+    @State
+    public static class CancelIsTerminal {
+        private final FakeService service = new FakeService(id -> Mono.never());
+        private final BatchExecution batch = batch(service, 5, false, subRequest("a"));
+
+        public CancelIsTerminal() {
+            batch.start();
+        }
+
+        @Actor
+        public void cancel() {
+            batch.cancel();
+        }
+
+        @Actor
+        public void result() {
+            batch.addResponse("a", response("a", 200));
+        }
+
+        @Arbiter
+        public void arbiter(II_Result result) {
+            result.r1 = batch.future().isDone() ? 1 : 0;
+            result.r2 = batch.responses().size();
+        }
+    }
+
+    @JCStressTest
     @Description("The batch completes with every response after concurrent results.")
     @Outcome(id = "1, 2", expect = ACCEPTABLE, desc = "Complete, with both responses")
     @Outcome(expect = FORBIDDEN, desc = "Batch hung or lost a response")

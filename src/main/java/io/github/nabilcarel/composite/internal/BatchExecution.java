@@ -160,7 +160,8 @@ public final class BatchExecution {
     }
 
     /**
-     * Records a result and starts any work it unlocks. Later results for the same ID are ignored.
+     * Records a result and starts any work it unlocks. Later results for the same ID, and every
+     * result after {@link #cancel()} or a stop on failure, are ignored.
      *
      * @param referenceId the sub-request reference ID
      * @param response the result
@@ -172,18 +173,18 @@ public final class BatchExecution {
 
         lock.lock();
         try {
+            // Closing is terminal. A stop on failure has already recorded every missing result,
+            // and after cancel() nobody reads further results.
             Node node = nodes.get(referenceId);
-            if (node == null || responses.putIfAbsent(referenceId, response) != null) {
+            if (closed || node == null || responses.putIfAbsent(referenceId, response) != null) {
                 return;
             }
 
-            if (!closed) {
-                if (stopOnFailure && isFailure(response)) {
-                    stopAfterFailure(referenceId);
-                    stopped = true;
-                } else {
-                    unlockDependents(node);
-                }
+            if (stopOnFailure && isFailure(response)) {
+                stopAfterFailure(referenceId);
+                stopped = true;
+            } else {
+                unlockDependents(node);
             }
             complete = responses.size() == nodes.size();
         } finally {
