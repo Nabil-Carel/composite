@@ -290,6 +290,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
             try {
                 dispatcher.dispatch(request, cancellation).whenComplete((result, failure) -> {
+                    if (cancellation.isCancelled()) {
+                        // Nobody is listening, and Reactor would log a late error as dropped.
+                        return;
+                    }
                     if (failure != null) {
                         sink.error(failure);
                     } else {

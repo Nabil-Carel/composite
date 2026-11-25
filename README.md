@@ -233,6 +233,8 @@ If `composite.request-timeout` elapses, the response is `504`, in-flight calls a
 
 Sub-requests are sent with the non-blocking JDK `HttpClient` by default, so Composite needs no Netty or Reactor Netty. Set `composite.loopback.client=webclient` and add `spring-boot-starter-webflux` to use WebClient instead. Both clients wait for responses without holding a thread.
 
+With `composite.loopback.protocol=https`, loopback calls verify the server certificate against the JVM truststore. `composite.loopback.trust-self-signed-certificates=true` skips that check entirely and is meant for development only. In production, add your certificate to the truststore instead.
+
 `composite.loopback.max-connections` also limits running sub-request handlers across all batches. Above it, calls wait for a connection, or return `503` if timed-out handlers are still running. The limit is shared, so one client sending many slow batches can delay other batch users. Add per-client rate limiting in production.
 
 Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones.

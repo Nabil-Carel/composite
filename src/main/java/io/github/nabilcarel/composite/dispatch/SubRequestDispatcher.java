@@ -12,6 +12,10 @@ import java.util.concurrent.CompletionStage;
  * is a normal {@link DispatchResult}. Implementations must not follow redirects and must send
  * the request only to this application.
  *
+ * <p>When the {@link CancellationSignal} fires, abort the call and release any connection or
+ * permit it holds. Composite ignores results that arrive after cancellation, so a call that
+ * keeps running only wastes resources.
+ *
  * @since 0.1.0
  */
 public interface SubRequestDispatcher {

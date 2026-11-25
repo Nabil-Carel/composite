@@ -87,6 +87,8 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
     @Override
     public CompletionStage<DispatchResult> dispatch(PreparedSubRequest request, CancellationSignal cancellation) {
         CompletableFuture<DispatchResult> result = new CompletableFuture<>();
+        // A call cancelled while queued completes at once and gives up its turn when it is reached.
+        cancellation.onCancel(() -> result.cancel(false));
         waiting.add(() -> send(request, cancellation, result));
         drain();
         return result;
@@ -122,10 +124,14 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
         drain();
     }
 
+    /**
+     * Runs inside {@link #drain()}. A call that ends before it is sent returns its permit
+     * without draining again, because the running drain loop continues with the next call.
+     */
     private void send(PreparedSubRequest request, CancellationSignal cancellation,
                       CompletableFuture<DispatchResult> result) {
-        if (cancellation.isCancelled()) {
-            release();
+        if (cancellation.isCancelled() || result.isDone()) {
+            permits.incrementAndGet();
             return;
         }
 
@@ -135,7 +141,7 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
                     info -> new LimitedBodySubscriber(maxResponseBytes,
                             info.headers().firstValueAsLong("Content-Length").orElse(-1)));
         } catch (Exception e) {
-            release();
+            permits.incrementAndGet();
             result.completeExceptionally(e);
             return;
         }

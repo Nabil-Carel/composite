@@ -2,6 +2,8 @@ package io.github.nabilcarel.composite.integration.controllers;
 
 import io.github.nabilcarel.composite.annotation.CompositeEndpoint;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -35,5 +37,25 @@ public class TestLimitsController {
         }
         COMPLETED.incrementAndGet();
         return Map.of("id", id);
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/async-ok")
+    public CompletableFuture<Map<String, Object>> asyncOk() {
+        return CompletableFuture.supplyAsync(() -> Map.of("ok", true), CompletableFuture.delayedExecutor(10, TimeUnit.MILLISECONDS));
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/async-fail")
+    public CompletableFuture<Map<String, Object>> asyncFail() {
+        return CompletableFuture.supplyAsync(() -> {
+            throw new IllegalStateException("async handler failed");
+        }, CompletableFuture.delayedExecutor(10, TimeUnit.MILLISECONDS));
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/throw")
+    public Map<String, Object> fail() {
+        throw new IllegalStateException("handler failed");
     }
 }
