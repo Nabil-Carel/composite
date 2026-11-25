@@ -113,6 +113,17 @@ class CompositeAdversarialIntegrationTest {
         }
 
         @Test
+        void headerValueOutsideLatin1_isAClientError() throws Exception {
+            JsonNode response = json(post(rest,
+                batch(sub("a", "GET", "/api/adv/headers", "\"headers\":{\"X-Trace\":\"李雷\"}"))));
+
+            assertThat(status(response, "a")).isEqualTo(400);
+            assertThat(response.at("/responses/a/body").asText())
+                .contains("Header X-Trace contains characters that HTTP headers cannot carry");
+            assertThat(TestAdversarialController.lastHeaders).isNull();
+        }
+
+        @Test
         void clientCannotAddAForwardedCredential_theCallerDidNotSend() {
             ResponseEntity<String> response = post(rest,
                 batch(sub("a", "GET", "/api/adv/headers", "\"headers\":{\"x-api-key\":\"other-key\"}")));
@@ -523,13 +534,14 @@ class CompositeAdversarialIntegrationTest {
     }
 
     /**
-     * With platform threads, the handler limit is half of the 20 Tomcat threads, so abandoned
-     * handlers cannot exhaust the pool. Virtual threads have no pool to exhaust, so the limit
-     * follows Tomcat's connection limit instead, and only responsiveness and recovery apply.
+     * With platform threads, the connection limit is half of the 20 Tomcat threads and the
+     * handler limit adds 10% headroom (11), so abandoned handlers cannot exhaust the pool.
+     * Virtual threads have no pool to exhaust, so the limit follows Tomcat's connection limit
+     * instead, and only responsiveness and recovery apply.
      */
     private static void assertHandlerLimitHeld() {
         if (!Boolean.getBoolean("spring.threads.virtual.enabled")) {
-            assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(10);
+            assertThat(TestAdversarialController.MAX_ACTIVE.get()).isLessThanOrEqualTo(11);
         }
     }
 

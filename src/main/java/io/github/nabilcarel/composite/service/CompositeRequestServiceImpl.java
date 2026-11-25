@@ -172,6 +172,15 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
             return Mono.empty();
         }
 
+        String unsendableHeader = firstUnsendableHeader(subRequest.getResolvedHeaders());
+        if (unsendableHeader != null) {
+            log.debug("Sub-request {} rejected: header value cannot be sent", subRequest.getReferenceId());
+            recordError(batch, subRequest.getReferenceId(), HttpStatus.BAD_REQUEST.value(),
+                    "Header " + unsendableHeader + " contains characters that HTTP headers cannot carry. "
+                            + "Use only ISO-8859-1 characters, or encode the value, for example as Base64.");
+            return Mono.empty();
+        }
+
         HttpHeaders headers = new HttpHeaders();
         if (subRequest.getResolvedHeaders() != null) {
             subRequest.getResolvedHeaders().forEach(headers::set);
@@ -262,6 +271,23 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
             }
         }
         return false;
+    }
+
+    /**
+     * HTTP header values are ISO-8859-1. A value outside it would make the client fail the call
+     * as if the server could not be reached, so it is reported as a client error instead.
+     */
+    private static String firstUnsendableHeader(Map<String, String> headers) {
+        if (headers == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String value = header.getValue();
+            if (value != null && value.chars().anyMatch(c -> c > 0xFF)) {
+                return header.getKey();
+            }
+        }
+        return null;
     }
 
     /** Only library validation messages are safe to return to the client. */
@@ -493,6 +519,10 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         if (cause instanceof CancellationException) {
             log.debug("Composite execution cancelled");
+        } else if (timedOut) {
+            // Expected under load, so one line without a stack trace.
+            log.warn("Composite request timed out after {} before every sub-request finished",
+                    properties.getRequestTimeout());
         } else {
             log.error("Composite execution failed: {}", cause.getMessage(), cause);
         }

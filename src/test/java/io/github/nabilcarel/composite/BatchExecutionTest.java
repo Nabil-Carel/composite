@@ -172,6 +172,17 @@ class BatchExecutionTest {
     }
 
     @Test
+    void redirectedDependency_records424WithoutRunningTheDependent() {
+        BatchExecution batch = batch(request("a"), request("b", "a"));
+        batch.start();
+
+        batch.addResponse("a", response("a", 304));
+
+        assertThat(calls.started).containsExactly("a");
+        assertThat(batch.responses().get("b").getHttpStatus()).isEqualTo(424);
+    }
+
+    @Test
     void concurrentResponses_completeTheBatch() throws Exception {
         int count = 10;
         SubRequest[] requests = new SubRequest[count];

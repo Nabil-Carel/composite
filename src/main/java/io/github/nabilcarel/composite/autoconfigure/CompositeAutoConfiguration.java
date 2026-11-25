@@ -44,8 +44,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.web.servlet.HandlerExceptionResolver;
-import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.handler.MappedInterceptor;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
@@ -114,24 +114,33 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
      * Registers the interceptor that verifies the handler selected for each loopback
      * sub-request.
      *
+     * <p>A {@link MappedInterceptor} bean is picked up by every handler mapping in the
+     * context, including Actuator's and any the application declares. An interceptor added
+     * through {@link WebMvcConfigurer} would only reach Spring MVC's own mappings, so a broad
+     * annotated route could reach an Actuator endpoint without the check.
+     *
      * @param loopbackProperties loopback limits
      * @param marker identifies genuine loopback calls
+     * @return the interceptor for all handler mappings
+     */
+    @Bean
+    public MappedInterceptor compositeDispatchInterceptor(CompositeLoopbackProperties loopbackProperties,
+                                                          DispatchMarker marker) {
+        int maxConnections = LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties);
+        return new MappedInterceptor(null,
+                new CompositeDispatchInterceptor(LoopbackSupport.handlerLimit(maxConnections), marker));
+    }
+
+    /**
+     * Registers the error handling for unreadable composite request bodies.
+     *
      * @param objectMapper the composite object mapper
      * @return the MVC configurer
      */
     @Bean
     public WebMvcConfigurer compositeDispatchConfigurer(
-            CompositeLoopbackProperties loopbackProperties,
-            DispatchMarker marker,
             @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
-        int maxConcurrentHandlers = LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties);
-
         return new WebMvcConfigurer() {
-            @Override
-            public void addInterceptors(InterceptorRegistry registry) {
-                registry.addInterceptor(new CompositeDispatchInterceptor(maxConcurrentHandlers, marker));
-            }
-
             @Override
             public void extendHandlerExceptionResolvers(List<HandlerExceptionResolver> resolvers) {
                 resolvers.add(0, new CompositeRequestBodyExceptionResolver(objectMapper));

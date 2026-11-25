@@ -48,6 +48,18 @@ final class LoopbackSupport {
         return loopbackProperties.getMaxConnections();
     }
 
+    /**
+     * Returns the server-side limit on running sub-request handlers, slightly above the
+     * client's connection limit.
+     *
+     * <p>A handler gives its slot back only after the client has already read the whole
+     * response, so with equal limits a queued call sent in that short gap would get a
+     * spurious {@code 503}. The extra 10%, at least one, covers handlers that are finishing.
+     */
+    static int handlerLimit(int maxConnections) {
+        return maxConnections + Math.max(1, maxConnections / 10);
+    }
+
     static int toBufferLimit(DataSize maxResponseSize) {
         if (maxResponseSize == null
                 || maxResponseSize.toBytes() < 1

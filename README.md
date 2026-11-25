@@ -133,7 +133,7 @@ Use these for auditing and logging only. A direct client can send the same heade
 **Sub-request safety rules:**
 
 - Targets must be application-relative paths. Absolute URLs, `//host`, dot segments, fragments and path parameters are rejected.
-- A sub-request runs only if the handler Spring selects has `@CompositeEndpoint`.
+- A sub-request runs only if the handler Spring selects has `@CompositeEndpoint`. This also applies to handlers from other handler mappings, such as Actuator endpoints on the main port, which are refused with `403`.
 - Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused, and so is any header on `composite.security.forwarded-headers`, so a caller cannot swap in another credential for one sub-request.
 - Forwarded headers are copied exactly as the caller sent them. Forward only credentials. If your app trusts a header such as `X-Forwarded-For` because a proxy sets it, forwarding it lets callers' values through unchecked.
 - Response values are substituted once, so stored data cannot act as a `${...}` reference.
@@ -239,7 +239,7 @@ With `composite.loopback.protocol=https`, loopback calls verify the server certi
 
 `composite.loopback.max-connections` also limits running sub-request handlers across all batches. Above it, calls wait for a connection, or return `503` if timed-out handlers are still running. The limit is shared, so one client sending many slow batches can delay other batch users. Add per-client rate limiting in production.
 
-Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones.
+Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones. A sub-request whose dependency returned anything other than `2xx`, including a redirect or `304`, does not run and returns `424`.
 
 ### 5. Stop the batch on the first failure
 ```json

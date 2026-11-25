@@ -249,11 +249,15 @@ public final class BatchExecution {
         }
     }
 
+    /**
+     * Any non-2xx dependency counts, as it does for {@code hasErrors} and stop on failure. A 1xx
+     * or 3xx response has no body to reference, so its dependents could only fail later.
+     */
     private Set<String> failedDependencies(Node node) {
         Set<String> failed = new TreeSet<>();
         for (String dependency : node.request.getDependencies()) {
             SubResponse response = responses.get(dependency);
-            if (response != null && response.getHttpStatus() >= 400) {
+            if (response != null && isFailure(response)) {
                 failed.add(dependency);
             }
         }

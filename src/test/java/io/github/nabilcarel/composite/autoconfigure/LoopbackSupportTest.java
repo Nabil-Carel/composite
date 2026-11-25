@@ -17,6 +17,14 @@ class LoopbackSupportTest {
     private final CompositeLoopbackProperties properties = new CompositeLoopbackProperties();
 
     @Test
+    void handlerLimit_hasTenPercentHeadroomOverTheConnectionLimit() {
+        assertThat(LoopbackSupport.handlerLimit(1)).isEqualTo(2);
+        assertThat(LoopbackSupport.handlerLimit(10)).isEqualTo(11);
+        assertThat(LoopbackSupport.handlerLimit(100)).isEqualTo(110);
+        assertThat(LoopbackSupport.handlerLimit(4096)).isEqualTo(4505);
+    }
+
+    @Test
     void trustingAllCertificates_isOffAndSilentByDefault(CapturedOutput output) {
         assertThat(LoopbackSupport.warnIfTrustingAllCertificates(new MockEnvironment())).isFalse();
         assertThat(output).doesNotContain("trust-self-signed-certificates");
