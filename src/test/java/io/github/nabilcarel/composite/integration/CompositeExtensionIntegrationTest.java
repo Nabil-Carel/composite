@@ -68,6 +68,17 @@ class CompositeExtensionIntegrationTest {
                         REFUSED.incrementAndGet();
                         return CompletableFuture.failedFuture(new java.net.ConnectException("refused"));
                     }
+                    if (request.url().contains("/jdk-connect-timeout")) {
+                        // The JDK client attaches a ConnectException as the cause.
+                        java.net.http.HttpConnectTimeoutException timeout =
+                            new java.net.http.HttpConnectTimeoutException("connect timed out");
+                        timeout.initCause(new java.net.ConnectException("HTTP connect timed out"));
+                        return CompletableFuture.failedFuture(timeout);
+                    }
+                    if (request.url().contains("/netty-connect-timeout")) {
+                        return CompletableFuture.failedFuture(
+                            new io.netty.channel.ConnectTimeoutException("connect timed out"));
+                    }
                     if (request.url().contains("/failing")) {
                         return CompletableFuture.failedFuture(new IllegalStateException("internal-host:1234"));
                     }
@@ -105,6 +116,16 @@ class CompositeExtensionIntegrationTest {
         assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
         assertThat(response.at("/responses/a/body").asText()).contains("could not be reached");
         assertThat(REFUSED).hasValue(4);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"jdk-connect-timeout", "netty-connect-timeout"})
+    void connectTimeouts_areNotRetried(String id) throws Exception {
+        JsonNode response = new ObjectMapper().readTree(execute(get("a", id)).getBody());
+
+        assertThat(REQUESTS).hasSize(1);
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
+        assertThat(response.at("/responses/a/body").asText()).contains("could not be reached");
     }
 
     @Test

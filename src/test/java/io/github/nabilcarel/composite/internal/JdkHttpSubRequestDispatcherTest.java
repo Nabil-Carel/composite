@@ -67,6 +67,19 @@ class JdkHttpSubRequestDispatcherTest {
             await(releaseHang);
             respond(exchange, new byte[0], false);
         });
+        server.createContext("/late-body", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.flush();
+                sleep(800);
+                out.write("{}".getBytes(StandardCharsets.UTF_8));
+            }
+        });
+        server.createContext("/late-headers", exchange -> {
+            sleep(800);
+            respond(exchange, new byte[0], false);
+        });
         server.createContext("/slow", exchange -> {
             maxRunning.accumulateAndGet(running.incrementAndGet(), Math::max);
             try {
@@ -163,6 +176,19 @@ class JdkHttpSubRequestDispatcherTest {
         assertThat(okHits).hasValue(1);
     }
 
+    /** composite.loopback.response-timeout limits the wait for headers, as documented, not the body. */
+    @Test
+    void responseTimeout_coversHeadersButNotTheBody() throws Exception {
+        try (JdkHttpSubRequestDispatcher timed = new JdkHttpSubRequestDispatcher(baseUrl::get, new ObjectMapper(),
+                Executors.newCachedThreadPool(), Duration.ofSeconds(2), Duration.ofMillis(300), LIMIT, 2, null)) {
+            assertThat(timed.dispatch(request("/late-body"), new DefaultCancellationSignal())
+                .toCompletableFuture().get(5, TimeUnit.SECONDS).body()).isEqualTo("{}");
+
+            assertFailsWith(timed.dispatch(request("/late-headers"), new DefaultCancellationSignal())
+                .toCompletableFuture(), java.net.http.HttpTimeoutException.class);
+        }
+    }
+
     @Test
     void connectionLimit_holdsUnderLoad() throws Exception {
         List<CompletableFuture<DispatchResult>> calls = new ArrayList<>();
@@ -217,6 +243,14 @@ class JdkHttpSubRequestDispatcherTest {
         exchange.sendResponseHeaders(200, chunked ? 0 : (body.length == 0 ? -1 : body.length));
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
+        }
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

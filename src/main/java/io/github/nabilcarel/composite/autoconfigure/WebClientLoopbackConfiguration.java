@@ -58,7 +58,10 @@ class WebClientLoopbackConfiguration {
         return ConnectionProvider.builder("composite-loopback")
                 .maxConnections(LoopbackSupport.effectiveMaxConnections(environment, loopbackProperties))
                 .pendingAcquireMaxCount(-1)
-                .pendingAcquireTimeout(properties.getRequestTimeout())
+                // The same limit as the sub-request timeout, which normally cancels the wait first.
+                .pendingAcquireTimeout(properties.getSubRequestTimeout() != null
+                        ? properties.getSubRequestTimeout()
+                        : properties.getRequestTimeout())
                 .build();
     }
 

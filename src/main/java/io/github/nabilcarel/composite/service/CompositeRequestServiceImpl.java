@@ -237,7 +237,9 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
     /**
      * Retries connections the server refused, for example while a burst of new loopback
-     * connections fills Tomcat's accept queue. The sub-request timeout still bounds the total.
+     * connections fills Tomcat's accept queue. A refusal is immediate and the request never
+     * reached a handler. Connect timeouts are not retried: each one has already waited for
+     * {@code composite.loopback.connect-timeout}. The sub-request timeout still bounds the total.
      */
     private static final Retry CONNECT_RETRY = Retry.backoff(3, Duration.ofMillis(10))
             .maxBackoff(Duration.ofMillis(100))
@@ -246,6 +248,12 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
     private static boolean isConnectFailure(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            // Both clients report a connect timeout as a ConnectException or with one as its cause.
+            if (cause instanceof HttpConnectTimeoutException
+                    // Compared by name because Netty is optional.
+                    || cause.getClass().getName().equals("io.netty.channel.ConnectTimeoutException")) {
+                return false;
+            }
             if (cause instanceof ConnectException) {
                 return true;
             }
