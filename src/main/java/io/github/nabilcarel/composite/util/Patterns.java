@@ -19,8 +19,12 @@ public class Patterns {
      *
      * <p>Capture group 1 contains the expression inside the braces.
      * Example matches: {@code ${user.id}}, {@code ${items[0].name}}.
+     *
+     * <p>The expression excludes {@code $} and <code>{</code>, as {@link ReferenceTemplate}
+     * does. Each match attempt therefore stops at the next <code>${</code>, so matching
+     * stays linear for client text with many unclosed placeholders.
      */
-    public static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+    public static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^${}]++)}");
 
     /**
      * Splits a placeholder expression at the first {@code .} or {@code [} separator to
