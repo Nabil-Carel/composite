@@ -131,6 +131,16 @@ tasks.register('jvmProfile', JavaExec) {
     }
 }
 
+// Downloads every dependency once, so CI can cache them before the other jobs start.
+tasks.register('resolveAllDependencies') {
+    description = 'Resolves every resolvable configuration.'
+    group = 'help'
+    doLast {
+        // Classpaths are resolvable only. Legacy configurations that are also consumable are skipped.
+        configurations.findAll { it.canBeResolved && !it.canBeConsumed }.each { it.resolve() }
+    }
+}
+
 // Explores thread interleavings in the concurrent core: ./gradlew jcstress -PjcstressMode=default
 tasks.register('jcstress', JavaExec) {
     description = 'Runs jcstress concurrency tests.'
