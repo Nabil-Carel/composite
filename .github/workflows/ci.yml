@@ -27,11 +27,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 env:
-  # setup-java exports these, and Gradle uses them to find the 17 and 21 toolchains.
-  TOOLCHAINS: -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64 -Porg.gradle.java.installations.auto-download=false
+  # setup-java exports these, and Gradle uses them to find the 17 and 21 toolchains. The retry
+  # settings ride out Maven Central rate limits (HTTP 429) with a longer backoff.
+  TOOLCHAINS: >-
+    -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64
+    -Porg.gradle.java.installations.auto-download=false
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=2000
 
 jobs:
+  dependencies:
+    # Downloads every dependency once per OS and saves the Gradle cache, which setup-gradle
+    # otherwise saves only on the default branch. The other jobs restore it, so a push does
+    # not send every matrix job to Maven Central at once and trip its rate limit.
+    name: Dependencies · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Download dependencies
+        run: ./gradlew resolveAllDependencies --console=plain $TOOLCHAINS
+
   test:
+    needs: dependencies
     # Unit, integration, security sample, adversarial and packaged-jar tests, plus Javadoc.
     name: Tests · ${{ matrix.os }} · Java ${{ matrix.java }}${{ matrix.virtual-threads == 'true' && ' · virtual threads' || '' }}${{ matrix.client == 'webclient' && ' · WebClient' || '' }}
     runs-on: ${{ matrix.os }}
@@ -93,6 +129,7 @@ jobs:
           if-no-files-found: ignore
 
   jcstress:
+    needs: dependencies
     # Explores thread interleavings in the scheduler and handler limit.
     name: Concurrency stress · Java ${{ matrix.java }}
     runs-on: ubuntu-latest
@@ -128,6 +165,7 @@ jobs:
           if-no-files-found: ignore
 
   profile:
+    needs: dependencies
     # Short profiling run for each thread model and dispatcher. Fails only on request errors,
     # because shared CI machines are too noisy to gate on latency.
     name: Profile · ${{ matrix.virtual-threads == 'true' && 'virtual' || 'platform' }} threads · ${{ matrix.dispatcher }}
@@ -180,6 +218,7 @@ jobs:
           if-no-files-found: ignore
 
   package:
+    needs: dependencies
     # Builds the published artifacts and checks what consumers would receive.
     name: Package
     runs-on: ubuntu-latest
@@ -195,7 +234,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Publish to the local Maven repository
-        run: ./gradlew publishToMavenLocal --console=plain
+        run: ./gradlew publishToMavenLocal --console=plain -Dorg.gradle.internal.repository.max.retries=6 -Dorg.gradle.internal.repository.initial.backoff=2000
 
       - name: Check artifacts and dependency scopes
         run: |
