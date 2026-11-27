@@ -286,7 +286,8 @@ composite.loopback.connect-timeout=5s
 composite.loopback.max-response-size=256KB
 # Unset by default, so it follows the server's limits. See "Loopback calls and threads".
 # composite.loopback.max-connections=100
-composite.loopback.trust-self-signed-certificates=false
+# Unset by default, so HTTPS calls trust the certificate in server.ssl. See "HTTPS loopback".
+# composite.loopback.ssl-bundle=loopback
 
 # Debugging. Adds resolved URLs and bodies to responses, so keep it off in production.
 composite.debug-enabled=false
@@ -325,7 +326,18 @@ The default depends on the thread model:
 
 ### HTTPS loopback
 
-With `composite.loopback.protocol=https`, loopback calls verify the server certificate against the JVM truststore. `composite.loopback.trust-self-signed-certificates=true` skips that check entirely and is meant for development and tests only. A warning is logged at startup while it's on. In production, add your certificate to the truststore instead.
+Set `composite.loopback.protocol=https` when your application serves HTTPS. Loopback calls then trust exactly the certificate configured in `server.ssl`, and no other. This works the same for self-signed and authority-issued certificates, and needs no truststore changes. Host names aren't checked, because only your server holds the private key for that certificate. So a certificate issued for `api.example.com` still works for calls to `localhost`. If the server's bundle is reloaded, loopback calls follow the new certificate.
+
+If your server's TLS isn't configured through `server.ssl`, name an [SSL bundle](https://docs.spring.io/spring-boot/reference/features/ssl.html) that holds the server's own certificate:
+
+```properties
+composite.loopback.ssl-bundle=loopback
+spring.ssl.bundle.pem.loopback.truststore.certificate=classpath:server.crt
+```
+
+The bundle's trust store, or else its key store, must contain the server certificate itself. A certificate authority alone isn't enough. If neither source is available, loopback calls fall back to the JVM truststore and a warning is logged at startup.
+
+`composite.loopback.trust-self-signed-certificates` is deprecated and has no effect. Remove it.
 
 ## Security
 

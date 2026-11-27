@@ -5,6 +5,7 @@ import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.DeprecatedConfigurationProperty;
 import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
@@ -17,11 +18,11 @@ import org.springframework.validation.annotation.Validated;
  * {@link io.github.nabilcarel.composite.autoconfigure.CompositeAutoConfiguration}.
  *
  * <h2>HTTPS configuration</h2>
- * <p>When your application runs behind TLS, set {@code composite.loopback.protocol=https}.
- * For production environments, import the server certificate into the JVM truststore.
- * For local development with self-signed certificates you may set
- * {@code composite.loopback.trust-self-signed-certificates=true},
- * but never enable that option in production.
+ * <p>When your application serves HTTPS, set {@code composite.loopback.protocol=https}.
+ * Loopback calls then trust exactly the certificate configured in {@code server.ssl}, whether
+ * self-signed or issued by an authority, and nothing else. No truststore changes are needed.
+ * If the server's TLS is not configured through {@code server.ssl}, name a bundle holding its
+ * certificate with {@code composite.loopback.ssl-bundle}.
  *
  * <h2>Example</h2>
  * <pre class="code">
@@ -81,15 +82,18 @@ public final class CompositeLoopbackProperties {
     private String protocol = "http";
 
     /**
-     * Whether loopback calls accept any certificate when {@link #protocol} is {@code https}.
+     * Optional SSL bundle holding the certificate that HTTPS loopback calls trust.
      *
-     * <p><strong>Insecure, for development and tests only.</strong> Disabled by default.
-     * When enabled, loopback calls skip certificate and host name checks entirely, so
-     * anything able to intercept local traffic could read or change them, including the
-     * forwarded credentials. A warning is logged at startup while it is on. In production,
-     * add your server certificate to the JVM truststore instead.
+     * <p>When unset (the default), loopback calls trust exactly the certificate configured in
+     * {@code server.ssl}. Set it only when the server's TLS is configured some other way. The
+     * bundle's trust store, or else its key store, must contain the server's own certificate:
+     * calls are pinned to it, so a certificate authority alone is not enough.
      */
-    // Off by default. Enabling it is logged as a warning at startup.
+    private String sslBundle;
+
+    /** Deprecated and ignored. HTTPS loopback calls trust the server's own certificate. */
+    @Getter(lombok.AccessLevel.NONE)
+    @Setter(lombok.AccessLevel.NONE)
     private boolean trustSelfSignedCertificates = false;
 
     /**
@@ -115,4 +119,28 @@ public final class CompositeLoopbackProperties {
      */
     @Min(1)
     private Integer maxConnections;
+
+    /**
+     * Returns whether the deprecated trust option is set. It has no effect.
+     *
+     * @return the configured value
+     * @deprecated since 0.1.0: HTTPS loopback calls trust the server's own certificate, so the
+     *     option is no longer needed. Remove it.
+     */
+    @Deprecated(since = "0.1.0", forRemoval = true)
+    @DeprecatedConfigurationProperty(reason = "HTTPS loopback calls trust the server's own certificate")
+    public boolean isTrustSelfSignedCertificates() {
+        return trustSelfSignedCertificates;
+    }
+
+    /**
+     * Sets the deprecated trust option. It has no effect.
+     *
+     * @param trustSelfSignedCertificates ignored
+     * @deprecated since 0.1.0: HTTPS loopback calls trust the server's own certificate.
+     */
+    @Deprecated(since = "0.1.0", forRemoval = true)
+    public void setTrustSelfSignedCertificates(boolean trustSelfSignedCertificates) {
+        this.trustSelfSignedCertificates = trustSelfSignedCertificates;
+    }
 }

@@ -8,6 +8,7 @@ import io.github.nabilcarel.composite.autoconfigure.CompositeAutoConfiguration;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
 import io.github.nabilcarel.composite.internal.JdkHttpSubRequestDispatcher;
 import io.github.nabilcarel.composite.internal.LoopbackAddress;
+import io.github.nabilcarel.composite.internal.LoopbackTrust;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.http.HttpMessageConvertersAutoConfiguration;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
+import org.springframework.boot.autoconfigure.ssl.SslAutoConfiguration;
+import org.springframework.boot.ssl.NoSuchSslBundleException;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration;
@@ -103,10 +106,20 @@ class LoopbackClientConfigurationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"jdk", "webclient"})
-    void httpsWithSelfSignedCertificates_createsTheClient(String client) {
-        runner.withPropertyValues("composite.loopback.client=" + client, "composite.loopback.protocol=https",
-                "composite.loopback.trust-self-signed-certificates=true")
-            .run(context -> assertThat(context.getBean(SubRequestDispatcher.class)).isNotNull());
+    void httpsWithoutServerSsl_createsTheClientWithJvmTrust(String client) {
+        runner.withPropertyValues("composite.loopback.client=" + client, "composite.loopback.protocol=https")
+            .run(context -> {
+                assertThat(context.getBean(SubRequestDispatcher.class)).isNotNull();
+                assertThat(context.getBeanProvider(LoopbackTrust.class).getIfAvailable()).isNull();
+            });
+    }
+
+    @Test
+    void unknownSslBundle_failsAtStartup() {
+        runner.withConfiguration(AutoConfigurations.of(SslAutoConfiguration.class))
+            .withPropertyValues("composite.loopback.protocol=https", "composite.loopback.ssl-bundle=missing")
+            .run(context -> assertThat(context).getFailure()
+                .rootCause().isInstanceOf(NoSuchSslBundleException.class).hasMessageContaining("missing"));
     }
 
     @ParameterizedTest

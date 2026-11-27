@@ -1,6 +1,7 @@
 package io.github.nabilcarel.composite.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import org.junit.jupiter.api.Test;
@@ -25,29 +26,41 @@ class LoopbackSupportTest {
     }
 
     @Test
-    void trustingAllCertificates_isOffAndSilentByDefault(CapturedOutput output) {
-        assertThat(LoopbackSupport.warnIfTrustingAllCertificates(new MockEnvironment())).isFalse();
+    void deprecatedTrustOption_isSilentWhenUnset(CapturedOutput output) {
+        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(new MockEnvironment())).isFalse();
         assertThat(output).doesNotContain("trust-self-signed-certificates");
     }
 
     @Test
-    void trustingAllCertificates_overHttps_warnsAtStartup(CapturedOutput output) {
-        MockEnvironment environment = new MockEnvironment()
-            .withProperty("composite.loopback.protocol", "https")
-            .withProperty("composite.loopback.trust-self-signed-certificates", "true");
-
-        assertThat(LoopbackSupport.warnIfTrustingAllCertificates(environment)).isTrue();
-        assertThat(output).contains("WARN").contains("accept any certificate")
-            .contains("development and tests only");
-    }
-
-    @Test
-    void trustingAllCertificates_overHttp_warnsThatItHasNoEffect(CapturedOutput output) {
+    void deprecatedTrustOption_warnsThatItHasNoEffect(CapturedOutput output) {
         MockEnvironment environment = new MockEnvironment()
             .withProperty("composite.loopback.trustSelfSignedCertificates", "true");
 
-        assertThat(LoopbackSupport.warnIfTrustingAllCertificates(environment)).isTrue();
-        assertThat(output).contains("has no effect");
+        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(environment)).isTrue();
+        assertThat(output).contains("WARN").contains("deprecated and has no effect");
+    }
+
+    @Test
+    void plainHttp_pinsNothing() {
+        assertThat(LoopbackSupport.loopbackTrust(properties, null, null)).isNull();
+    }
+
+    @Test
+    void httpsWithoutServerSsl_fallsBackToTheJvmTruststore(CapturedOutput output) {
+        properties.setProtocol("https");
+
+        assertThat(LoopbackSupport.loopbackTrust(properties, null, null)).isNull();
+        assertThat(output).contains("WARN").contains("server.ssl is not configured");
+    }
+
+    @Test
+    void namedBundleWithoutBundles_failsClearly() {
+        properties.setProtocol("https");
+        properties.setSslBundle("loopback");
+
+        assertThatThrownBy(() -> LoopbackSupport.loopbackTrust(properties, null, null))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("composite.loopback.ssl-bundle");
     }
 
     @Test
