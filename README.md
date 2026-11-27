@@ -260,6 +260,7 @@ composite.controller.enabled=true
 # Batch limits
 composite.max-sub-requests-per-composite=25
 composite.max-concurrent-sub-requests=5
+composite.max-concurrent-batches=200
 composite.max-depth=10
 composite.max-request-size=2MB
 composite.max-resolved-size=1MB
@@ -299,6 +300,7 @@ composite.debug-enabled=false
 | `controller.enabled` | Turn off the built-in endpoint to expose batches from [your own controller](#expose-batches-from-your-own-controller). |
 | `max-sub-requests-per-composite` | Larger batches are rejected with `400`. |
 | `max-concurrent-sub-requests` | How many sub-requests of one batch run at once. |
+| `max-concurrent-batches` | How many batches run at once across the application. A running batch holds no server thread but keeps its results in memory. Batches over the limit get `503` with `Retry-After`. |
 | `max-depth` | The longest chain of sub-requests that depend on each other. |
 | `max-request-size` | Enforced while the body is read, including chunked requests. Larger batches get `413`. |
 | `max-resolved-size` | How much referenced data one sub-request may insert. It stops a small request from multiplying a large response. |
@@ -336,8 +338,6 @@ spring.ssl.bundle.pem.loopback.truststore.certificate=classpath:server.crt
 ```
 
 The bundle's trust store, or else its key store, must contain the server certificate itself. A certificate authority alone isn't enough. If neither source is available, loopback calls fall back to the JVM truststore and a warning is logged at startup.
-
-`composite.loopback.trust-self-signed-certificates` is deprecated and has no effect. Remove it.
 
 ## Security
 
@@ -430,7 +430,7 @@ Composite coordinates HTTP calls to your existing endpoints.
 1. **Acceptance:** Spring MVC authenticates the request to `/api/composite/execute`, reads it and binds it.
 2. **Validation:** the batch structure, sizes, headers and targets are checked, and the dependency graph is built from the references. Circular or too-deep dependencies are rejected.
 3. **Scheduling:** sub-requests without dependencies start right away, up to `composite.max-concurrent-sub-requests` at once.
-4. **Loopback calls:** each sub-request is an HTTP call to your application on `localhost`, with forwarded credentials.
+4. **Loopback calls:** each sub-request is an HTTP call to your application on `localhost`, or on `server.address` when the server is bound to one address, with forwarded credentials.
 5. **Reference resolution:** when a sub-request finishes, the sub-requests waiting on it get their references filled in and start.
 6. **Aggregated response:** when every sub-request has a result, or the deadline passes, one response is returned.
 

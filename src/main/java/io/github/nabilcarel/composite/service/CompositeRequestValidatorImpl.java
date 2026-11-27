@@ -6,6 +6,9 @@ import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.github.nabilcarel.composite.util.ReferencePath;
+import io.github.nabilcarel.composite.util.ReferenceTemplate;
 import io.github.nabilcarel.composite.util.SubRequestHeaderPolicy;
 import io.github.nabilcarel.composite.util.SubRequestTarget;
 import jakarta.validation.ConstraintViolation;
@@ -265,6 +268,11 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
             errors.add("[" + refId + "] " + urlError);
         }
 
+        // Malformed references would otherwise fail only after the sub-requests they depend on had run.
+        for (String referenceError : validateReferences(request, urlError == null)) {
+            errors.add("[" + refId + "] " + referenceError);
+        }
+
         // Validate client-supplied headers
         if (request.getHeaders() != null) {
             for (String headerName : request.getHeaders().keySet()) {
@@ -287,6 +295,58 @@ public class CompositeRequestValidatorImpl implements CompositeRequestValidator 
         } catch (IllegalArgumentException e) {
             log.debug("Invalid URL format in a sub-request");
             return "Invalid URL format: " + url + ". " + URL_RULES;
+        }
+    }
+
+    /**
+     * Parses every reference in the URL, the header values and the body. Reports at most one
+     * error for the URL, each header and the body, so a large body cannot produce a huge reply.
+     */
+    private List<String> validateReferences(SubRequestDto request, boolean checkUrl) {
+        List<String> errors = new ArrayList<>();
+
+        if (checkUrl) {
+            referenceError(request.getUrl()).ifPresent(error -> errors.add("Invalid reference in the URL: " + error));
+        }
+
+        if (request.getHeaders() != null) {
+            request.getHeaders().forEach((name, value) -> referenceError(value)
+                    .ifPresent(error -> errors.add("Invalid reference in header " + name + ": " + error)));
+        }
+
+        Deque<JsonNode> pending = new ArrayDeque<>();
+        if (request.getBody() != null) {
+            pending.push(request.getBody());
+        }
+        while (!pending.isEmpty()) {
+            JsonNode node = pending.pop();
+            if (node.isTextual()) {
+                Optional<String> error = referenceError(node.textValue());
+                if (error.isPresent()) {
+                    errors.add("Invalid reference in the body: " + error.get());
+                    break;
+                }
+            } else if (node.isContainerNode()) {
+                node.forEach(pending::push);
+            }
+        }
+
+        return errors;
+    }
+
+    private static Optional<String> referenceError(String text) {
+        if (text == null || !text.contains("${")) {
+            return Optional.empty();
+        }
+        try {
+            for (ReferenceTemplate.Token token : ReferenceTemplate.parse(text).tokens()) {
+                if (token.reference()) {
+                    ReferencePath.parse(token.text());
+                }
+            }
+            return Optional.empty();
+        } catch (IllegalArgumentException e) {
+            return Optional.of(e.getMessage());
         }
     }
 

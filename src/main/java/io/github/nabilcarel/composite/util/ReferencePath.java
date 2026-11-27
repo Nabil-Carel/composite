@@ -83,9 +83,15 @@ public final class ReferencePath {
         }
 
         String content = expression.substring(contentStart, end);
-        steps.add(content.chars().allMatch(Character::isDigit)
-                ? Step.index(content)
-                : Step.key(content));
+        if (content.chars().allMatch(Character::isDigit)) {
+            try {
+                steps.add(Step.index(content));
+            } catch (NumberFormatException e) {
+                throw malformed(expression);
+            }
+        } else {
+            steps.add(Step.key(content));
+        }
         return end + 1;
     }
 

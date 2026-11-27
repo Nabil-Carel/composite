@@ -453,7 +453,16 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         BatchExecution batch = new BatchExecution(requestId, requestMap, this, context,
                 properties.getMaxConcurrentSubRequests(), compositeRequest.isStopOnFailure());
-        activeBatches.increment();
+        if (!activeBatches.tryIncrement(properties.getMaxConcurrentBatches())) {
+            // Expected under overload, so no log line per rejection.
+            log.debug("Composite request rejected: {} batches are already running",
+                    properties.getMaxConcurrentBatches());
+            return CompletableFuture.completedFuture(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .header(HttpHeaders.RETRY_AFTER, "1")
+                    .body(CompositeResponse.builder().hasErrors(true)
+                            .errors(List.of("Too many composite requests are running. Retry later."))
+                            .build()));
+        }
 
         AtomicBoolean finished = new AtomicBoolean();
         Consumer<String> finish = outcome -> {

@@ -166,26 +166,6 @@ class CompositeHttpsIntegrationTest {
     @Nested
     @SpringBootTest(classes = CompositeIntegrationTestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "composite.loopback.trust-self-signed-certificates=true")
-    class DeprecatedTrustOption {
-
-        @LocalServerPort
-        private int port;
-
-        @DynamicPropertySource
-        static void properties(DynamicPropertyRegistry registry) {
-            serveWith(registry, LOCALHOST);
-        }
-
-        @Test
-        void deprecatedOption_changesNothing() throws Exception {
-            assertSucceeds(execute(port, LOCALHOST));
-        }
-    }
-
-    @Nested
-    @SpringBootTest(classes = CompositeIntegrationTestApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "composite.loopback.ssl-bundle=loopback")
     class BundleWithTheServerCertificate {
 

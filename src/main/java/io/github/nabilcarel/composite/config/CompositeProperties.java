@@ -79,6 +79,19 @@ public class CompositeProperties {
     private int maxConcurrentSubRequests = 5;
 
     /**
+     * Maximum number of composite requests running at the same time across the application.
+     *
+     * <p>A running batch does not hold a server thread, so without this limit the number of
+     * batches would be bounded only by {@code server.tomcat.max-connections}, and each one
+     * keeps its sub-responses in memory until it finishes. A composite request over the limit
+     * fails at once with {@code 503} and a {@code Retry-After} header, before any sub-request
+     * runs. Must be at least {@code 1}. Defaults to {@code 200}, the number of requests
+     * Tomcat's default thread pool would run at once.
+     */
+    @Min(1)
+    private int maxConcurrentBatches = 200;
+
+    /**
      * Maximum amount of referenced data one sub-request may insert into its URL, its headers,
      * or its body.
      *

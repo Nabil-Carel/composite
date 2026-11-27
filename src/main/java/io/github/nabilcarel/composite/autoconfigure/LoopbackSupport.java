@@ -10,7 +10,6 @@ import java.util.Collections;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.thread.Threading;
-import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.ssl.SslBundle;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.boot.web.server.Ssl;
@@ -165,25 +164,5 @@ final class LoopbackSupport {
             throw new IllegalStateException(source + " contains no certificate for loopback calls to trust");
         }
         return certificates;
-    }
-
-    /**
-     * Logs a warning when the deprecated {@code composite.loopback.trust-self-signed-certificates}
-     * is set. Runs at startup because the HTTP clients are created on the first batch.
-     *
-     * @param environment the application environment
-     * @return whether the option is set to {@code true}
-     */
-    static boolean warnIfDeprecatedTrustOption(Environment environment) {
-        boolean enabled = Binder.get(environment)
-                .bind("composite.loopback.trust-self-signed-certificates", Boolean.class)
-                .orElse(false);
-        if (enabled) {
-            log.warn("""
-                    composite.loopback.trust-self-signed-certificates is deprecated and has no effect. \
-                    HTTPS loopback calls now trust only the server's own certificate, self-signed or not. \
-                    Remove the setting.""");
-        }
-        return enabled;
     }
 }

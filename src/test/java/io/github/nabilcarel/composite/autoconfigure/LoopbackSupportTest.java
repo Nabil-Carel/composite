@@ -26,21 +26,6 @@ class LoopbackSupportTest {
     }
 
     @Test
-    void deprecatedTrustOption_isSilentWhenUnset(CapturedOutput output) {
-        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(new MockEnvironment())).isFalse();
-        assertThat(output).doesNotContain("trust-self-signed-certificates");
-    }
-
-    @Test
-    void deprecatedTrustOption_warnsThatItHasNoEffect(CapturedOutput output) {
-        MockEnvironment environment = new MockEnvironment()
-            .withProperty("composite.loopback.trustSelfSignedCertificates", "true");
-
-        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(environment)).isTrue();
-        assertThat(output).contains("WARN").contains("deprecated and has no effect");
-    }
-
-    @Test
     void plainHttp_pinsNothing() {
         assertThat(LoopbackSupport.loopbackTrust(properties, null, null)).isNull();
     }
