@@ -1,18 +1,15 @@
 package io.github.nabilcarel.composite.service;
 
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
-import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Validates a {@link CompositeRequest} and its constituent {@link SubRequestDto sub-requests}
  * before execution begins.
  *
- * <p>Validation is performed eagerly in the
- * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter filter}, before
- * any sub-requests are dispatched. Any errors are collected into a list and surfaced to the
+ * <p>Validation is performed by {@link CompositeRequestService#execute}, before any
+ * sub-requests are dispatched. Any errors are collected into a list and surfaced to the
  * caller as a {@code 400 Bad Request} response; no sub-requests are executed if validation
  * fails.
  *
@@ -44,16 +41,6 @@ public interface CompositeRequestValidator {
      * @return a list of human-readable error messages; empty if the request is valid
      */
     List<String> validateRequest(CompositeRequest request);
-
-    /**
-     * Validates that all {@code ${referenceId...}} placeholder expressions in the given
-     * sub-request refer to IDs present in {@code availableRefs}.
-     *
-     * @param request       the sub-request whose placeholders are to be validated
-     * @param availableRefs the set of declared {@code referenceId}s in the composite request
-     * @return a list of error messages for unknown references; empty if all are valid
-     */
-    List<String> validateReferences(SubRequest request, Set<String> availableRefs);
 
     /**
      * Validates that the target endpoint of the given sub-request is registered in the

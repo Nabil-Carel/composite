@@ -1,12 +1,14 @@
 plugins {
 	id 'java-library'
     id 'maven-publish'
+    id 'signing'
+    id 'jacoco'
 	id 'org.springframework.boot' version '3.4.0' apply false
 	id 'io.spring.dependency-management' version '1.1.6'
 }
 
 group = 'io.github.nabil-carel'
-version = '0.0.1-SNAPSHOT'
+version = '0.1.0'
 
 java {
 	toolchain {
@@ -32,23 +34,146 @@ dependencyManagement {
     }
 }
 
+sourceSets {
+    jcstress {
+        java.srcDir 'src/jcstress/java'
+        compileClasspath += sourceSets.main.output + configurations.compileClasspath
+        runtimeClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
 dependencies {
+    jcstressImplementation 'org.openjdk.jcstress:jcstress-core:0.16'
+    jcstressAnnotationProcessor 'org.openjdk.jcstress:jcstress-core:0.16'
+    jcstressImplementation 'org.springframework:spring-test'
+
 	api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-validation'
-    api 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'io.projectreactor:reactor-core'
+    // Optional: only needed for composite.loopback.client=webclient.
+    compileOnly 'org.springframework.boot:spring-boot-starter-webflux'
 
 
     compileOnly 'org.projectlombok:lombok'
     compileOnly 'org.springframework.boot:spring-boot-actuator'
+    compileOnly 'org.springframework.security:spring-security-web'
     annotationProcessor 'org.projectlombok:lombok'
     annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webflux'
     testImplementation 'org.springframework.boot:spring-boot-actuator'
+    testImplementation 'org.springframework.boot:spring-boot-starter-security'
+    testImplementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+}
+
+jacoco {
+    toolVersion = '0.8.12'
 }
 
 test {
 	useJUnitPlatform()
+}
+
+// Runs every test with the WebClient loopback client: -PloopbackClient=webclient
+if (findProperty('loopbackClient')) {
+    tasks.withType(Test).configureEach {
+        systemProperty 'composite.loopback.client', findProperty('loopbackClient')
+    }
+}
+
+// Runs every test with Tomcat on virtual threads (Java 21+): -PtestJavaVersion=21 -PvirtualThreads=true
+if (findProperty('virtualThreads') == 'true') {
+    tasks.withType(Test).configureEach {
+        systemProperty 'spring.threads.virtual.enabled', 'true'
+    }
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+// Runs the sample application against the built jar instead of the compiled classes.
+def packagedJarTest = tasks.register('packagedJarTest', Test) {
+    description = 'Runs the sample application integration tests against the packaged library jar.'
+    group = 'verification'
+    useJUnitPlatform()
+    dependsOn tasks.named('jar')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = files(tasks.named('jar')) + sourceSets.test.output +
+            (sourceSets.test.runtimeClasspath - sourceSets.main.output)
+    include '**/sample/**'
+    systemProperty 'composite.expect.packaged', 'true'
+}
+
+tasks.named('check') {
+    dependsOn packagedJarTest
+}
+
+// Measures latency, allocation, GC and CPU by subsystem: ./gradlew jvmProfile
+tasks.register('jvmProfile', JavaExec) {
+    description = 'Profiles composite batches with Java Flight Recorder and writes a report.'
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.nabilcarel.composite.profile.CompositeProfiler'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    jvmArgs '-Xms512m', '-Xmx512m', '-XX:+UnlockDiagnosticVMOptions', '-XX:+DebugNonSafepoints'
+    systemProperty 'composite.profile.output', layout.buildDirectory.dir('reports/jvm-profile').get().asFile.path
+    ['concurrency', 'warmupSeconds', 'measureSeconds', 'virtualThreads', 'dispatcher', 'handlerDelayMillis',
+     'maxConnections'].each { name ->
+        if (project.hasProperty(name)) {
+            systemProperty "composite.profile.${name}", project.property(name)
+        }
+    }
+}
+
+// Downloads every dependency once, so CI can cache them before the other jobs start.
+tasks.register('resolveAllDependencies') {
+    description = 'Resolves every resolvable configuration.'
+    group = 'help'
+    doLast {
+        // Classpaths are resolvable only. Legacy configurations that are also consumable are skipped.
+        configurations.findAll { it.canBeResolved && !it.canBeConsumed }.each { it.resolve() }
+    }
+}
+
+// Explores thread interleavings in the concurrent core: ./gradlew jcstress -PjcstressMode=default
+tasks.register('jcstress', JavaExec) {
+    description = 'Runs jcstress concurrency tests.'
+    group = 'verification'
+    // jcstress scans every classpath entry and fails on directories that do not exist.
+    classpath = sourceSets.jcstress.runtimeClasspath.filter { it.exists() }
+    mainClass = 'org.openjdk.jcstress.Main'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    def reportDir = layout.buildDirectory.dir('reports/jcstress').get().asFile
+    workingDir = reportDir
+    args '-m', project.findProperty('jcstressMode') ?: 'quick', '-r', reportDir.path
+    if (project.hasProperty('jcstressTests')) {
+        args '-t', project.property('jcstressTests')
+    }
+    doFirst {
+        reportDir.mkdirs()
+    }
+}
+
+// Compiles for Java 17 and optionally runs tests, profiles and stress tests on another JDK: -PtestJavaVersion=21
+if (findProperty('testJavaVersion')) {
+    def testLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(findProperty('testJavaVersion') as int)
+    }
+    tasks.withType(Test).configureEach {
+        javaLauncher = testLauncher
+    }
+    tasks.named('jvmProfile') {
+        javaLauncher = testLauncher
+    }
+    tasks.named('jcstress') {
+        javaLauncher = testLauncher
+    }
 }
 
 tasks.named('compileJava') {
@@ -68,6 +193,45 @@ publishing {
                     fromResolutionResult()
                 }
             }
+
+            pom {
+                name = 'Composite Spring Boot Starter'
+                description = 'Spring Boot starter for batching dependent REST calls into one composite request'
+                url = 'https://github.com/Nabil-Carel/composite'
+
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        distribution = 'repo'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id = 'Nabil-Carel'
+                        name = 'Nabil Gbaguidi'
+                        url = 'https://github.com/Nabil-Carel'
+                    }
+                }
+
+                scm {
+                    connection = 'scm:git:https://github.com/Nabil-Carel/composite.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/Nabil-Carel/composite.git'
+                    url = 'https://github.com/Nabil-Carel/composite'
+                }
+            }
         }
+    }
+}
+
+// Provide signingKey and signingPassword as Gradle properties or ORG_GRADLE_PROJECT_* variables.
+signing {
+    def signingKey = findProperty('signingKey')
+    def signingPassword = findProperty('signingPassword')
+
+    if (signingKey) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign publishing.publications.mavenJava
     }
 }

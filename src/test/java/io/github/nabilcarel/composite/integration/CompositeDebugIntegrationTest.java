@@ -23,7 +23,8 @@ import static org.assertj.core.api.Assertions.*;
 @TestPropertySource(properties = {
     "composite.base-path=/api/composite",
     "composite.controller.enabled=true",
-    "composite.debug-enabled=true"
+    "composite.debug-enabled=true",
+    "composite.security.client-allowed-headers=X-Debug-Secret"
 })
 class CompositeDebugIntegrationTest {
 
@@ -143,7 +144,7 @@ class CompositeDebugIntegrationTest {
                     .method("GET")
                     .url("/api/users/user1")
                     .referenceId("user1")
-                    .headers(Map.of("Authorization", "Bearer secret-token"))
+                    .headers(Map.of("X-Debug-Secret", "secret-token"))
                     .build()
             ))
             .build();

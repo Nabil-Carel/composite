@@ -1,9 +1,11 @@
 package io.github.nabilcarel.composite.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -56,18 +58,17 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.USE_DEFAULTS)
+@JsonNaming
 public class SubRequestDto {
 
     /**
      * The target URL of this sub-request.
      *
-     * <p>May be a relative path (e.g. {@code /api/users/42}) or an absolute URI. Placeholder
+     * <p>Must be an application-relative path (e.g. {@code /api/users/42}). Placeholder
      * expressions of the form {@code ${referenceId.property}} are resolved at runtime against
      * completed sub-responses before the request is dispatched.
      */
-    @NotBlank(message = "URL is required")
-    // @Pattern(regexp = "^(http|https)://.*|^/.*",
-    // message = "URL must be absolute or start with /")
+    @NotBlank(message = "URL is required. Use an application-relative path such as /api/users/1.")
     private String url;
 
     /**
@@ -76,8 +77,8 @@ public class SubRequestDto {
      * <p>Accepted values are {@code GET}, {@code POST}, {@code PUT}, {@code DELETE},
      * and {@code PATCH}.
      */
-    @NotBlank(message = "HTTP method is required")
-    @Pattern(regexp = "^(GET|POST|PUT|DELETE|PATCH)$", message = "Invalid HTTP method")
+    @NotBlank(message = "HTTP method is required. Use GET, POST, PUT, PATCH or DELETE.")
+    @Pattern(regexp = "^(GET|POST|PUT|DELETE|PATCH)$", message = "Invalid HTTP method. Use uppercase GET, POST, PUT, PATCH or DELETE.")
     private String method;
 
     /**
@@ -87,8 +88,8 @@ public class SubRequestDto {
      * {@code ${referenceId.propertyPath}} placeholder expressions. Must match the pattern
      * {@code [a-zA-Z0-9_-]{1,50}}.
      */
-    @NotBlank(message = "Reference ID is required")
-    @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", message = "Reference ID must be alphanumeric with dashes/underscores, max 50 chars")
+    @NotBlank(message = "Reference ID is required. Give each sub-request a unique referenceId.")
+    @Pattern(regexp = "^[a-zA-Z0-9_-]{1,50}$", message = "Reference ID must use only letters, numbers, dashes or underscores, up to 50 characters.")
     private String referenceId;
 
     /**
@@ -112,15 +113,25 @@ public class SubRequestDto {
     private Map<String, String> headers = new HashMap<>();
 
     /**
+     * Rejects unknown fields regardless of the host application's Jackson settings, so a
+     * misspelled or unsupported option cannot be silently ignored.
+     */
+    @JsonAnySetter
+    void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unknown sub-request field: " + name + ". Remove it or check its spelling.");
+    }
+
+    /**
      * Bean Validation constraint that ensures a request body is present for methods that
      * require one ({@code POST}, {@code PUT}, {@code PATCH}).
      *
      * @return {@code true} if the body constraint is satisfied; {@code false} otherwise
      */
-    @AssertTrue(message = "Body is required for POST/PUT/PATCH requests")
+    @AssertTrue(message = "Body is required for POST, PUT and PATCH requests. Add a 'body' field.")
     private boolean isBodyValid() {
         boolean hasBody = body != null && !body.isNull() && !body.isMissingNode();
-        return !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
+        return method == null
+                || !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
                 || hasBody;
     }
 }

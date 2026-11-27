@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.controller;
 
+import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
@@ -12,14 +13,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.async.DeferredResult;
 
 /**
  * Built-in REST controller that exposes the composite execution and endpoint discovery
  * endpoints.
  *
- * <p>The controller is registered only when {@code composite.controller-enabled} is
+ * <p>The controller is registered only when {@code composite.controller.enabled} is
  * {@code true} (the default). Set it to {@code false} to replace this controller with
  * your own — for example, to add custom security annotations or a different response
  * envelope.
@@ -57,35 +60,47 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @Slf4j
 public class CompositeController {
+    /** Lets the batch deadline produce its response before the container's async timeout. */
+    private static final long ASYNC_TIMEOUT_MARGIN_MILLIS = 1_000;
+
     @Lazy
     private final CompositeRequestService requestService;
+    private final CompositeProperties properties;
 
     /**
      * Executes a composite request.
      *
-     * <p>The actual execution is driven by the
-     * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter filter},
-     * which has already dispatched the sub-requests by the time this method is invoked. This
-     * handler simply waits for the
-     * {@link io.github.nabilcarel.composite.model.ResponseTracker ResponseTracker} future to
-     * complete and returns the aggregated
-     * {@link io.github.nabilcarel.composite.model.response.CompositeResponse}.
+     * <p>Spring MVC has already authenticated the request, negotiated its content type and
+     * bound its body by the time this method runs, so a rejected request has no side
+     * effects. The servlet thread is released while the batch runs.
      *
-     * <p>The {@code requestBody} parameter is declared solely to allow API documentation
-     * tools (e.g. Springdoc / Swagger) to generate a correct request schema; the body is
-     * consumed by the filter before this method is called.
-     *
-     * @param request     the current servlet request carrying composite metadata as
-     *                    attributes set by the filter
+     * @param request     the current servlet request, used to capture forwarded headers
      * @param response    the current servlet response
-     * @param requestBody the composite request body (used for API documentation only)
-     * @return a {@link CompletableFuture} resolving to the composite response
+     * @param requestBody the composite request
+     * @return a {@link DeferredResult} resolving to the composite response
      */
-    @PostMapping("/execute")
-    public CompletableFuture<ResponseEntity<CompositeResponse>> execute(HttpServletRequest request,
-                                                                        HttpServletResponse response,
-                                                                        @RequestBody CompositeRequest requestBody /*for swagger*/) {
-       return requestService.execute(request, response);
+    @PostMapping(value = "/execute", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public DeferredResult<ResponseEntity<CompositeResponse>> execute(HttpServletRequest request,
+                                                                     HttpServletResponse response,
+                                                                     @RequestBody CompositeRequest requestBody) {
+        DeferredResult<ResponseEntity<CompositeResponse>> result = new DeferredResult<>(
+                properties.getRequestTimeout().toMillis() + ASYNC_TIMEOUT_MARGIN_MILLIS);
+
+        CompletableFuture<ResponseEntity<CompositeResponse>> execution =
+                requestService.execute(requestBody, request, response);
+
+        // Fires on normal completion too, where cancelling a finished future has no effect.
+        result.onCompletion(() -> execution.cancel(true));
+
+        execution.whenComplete((compositeResponse, failure) -> {
+            if (failure != null) {
+                result.setErrorResult(failure);
+            } else {
+                result.setResult(compositeResponse);
+            }
+        });
+
+        return result;
     }
 
     /**

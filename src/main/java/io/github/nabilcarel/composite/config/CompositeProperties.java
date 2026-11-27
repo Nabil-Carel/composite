@@ -1,11 +1,14 @@
 package io.github.nabilcarel.composite.config;
 
+import jakarta.validation.constraints.Min;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * Configuration properties for the Composite library, bound to the {@code composite} prefix.
@@ -26,19 +29,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @since 0.0.1
  */
 @ConfigurationProperties(prefix = "composite")
+@Validated
 @Getter
 @Setter
 public class CompositeProperties {
 
     /**
-     * Whether the built-in {@link io.github.nabilcarel.composite.controller.CompositeController}
-     * is registered.
+     * Configuration for the built-in
+     * {@link io.github.nabilcarel.composite.controller.CompositeController}.
      *
-     * <p>Set to {@code false} to disable the default controller and provide your own, for
-     * example when you need to add custom security annotations or response wrapping.
-     * Defaults to {@code true}.
+     * @see Controller
      */
-    private boolean controllerEnabled = true;
+    private Controller controller = new Controller();
 
     /**
      * Base path under which the composite endpoints are mounted.
@@ -67,13 +69,32 @@ public class CompositeProperties {
     private int maxSubRequestsPerComposite = 25;
 
     /**
-     * Ant-style URL pattern used to register the
-     * {@link io.github.nabilcarel.composite.config.filter.CompositeRequestFilter}.
+     * Maximum number of sub-requests from one batch that may run at the same time.
      *
-     * <p>Must match the URL of the composite execution endpoint. Defaults to
-     * {@code /api/composite/execute}.
+     * <p>Each running sub-request occupies a server request thread, so this limit prevents
+     * one batch from starving normal traffic. Must be at least {@code 1}. Defaults to
+     * {@code 5}.
      */
-    private String filterPattern = "/api/composite/execute";
+    @Min(1)
+    private int maxConcurrentSubRequests = 5;
+
+    /**
+     * Maximum amount of referenced data one sub-request may insert into its URL, its headers,
+     * or its body.
+     *
+     * <p>Prevents a small request from repeating a reference to a large response and forcing
+     * the server to build a very large payload. A sub-request over this limit fails with
+     * {@code 400}. Defaults to {@code 1MB}.
+     */
+    private DataSize maxResolvedSize = DataSize.ofMegabytes(1);
+
+    /**
+     * Maximum size of a composite request body.
+     *
+     * <p>The limit is enforced while the body is read, including for chunked requests. A larger
+     * request fails with {@code 413} before any sub-request runs. Defaults to {@code 2MB}.
+     */
+    private DataSize maxRequestSize = DataSize.ofMegabytes(2);
 
     /**
      * Configuration for composite-request tracking headers injected into each sub-request.
@@ -81,15 +102,6 @@ public class CompositeProperties {
      * @see HeaderInjection
      */
     private HeaderInjection headerInjection = new HeaderInjection();
-
-    /**
-     * Maximum number of placeholder-resolution iterations permitted per value.
-     *
-     * <p>Limits the depth to which nested {@code ${...}} expressions (e.g.
-     * {@code ${${other.key}.name}}) are expanded. Guards against pathological inputs that
-     * would otherwise cause infinite resolution loops. Defaults to {@code 10}.
-     */
-    private int maxResolutionIterations = 10;
 
     /**
      * Maximum allowed depth of the sub-request dependency graph.
@@ -126,12 +138,32 @@ public class CompositeProperties {
     // -------------------------------------------------------------------------
 
     /**
+     * Configuration for the built-in composite controller.
+     *
+     * @since 0.0.1
+     */
+    @Getter
+    @Setter
+    public static class Controller {
+
+        /**
+         * Whether the built-in controller is registered.
+         *
+         * <p>Set {@code composite.controller.enabled=false} to provide your own controller,
+         * for example to add custom security annotations or response wrapping.
+         * Defaults to {@code true}.
+         */
+        private boolean enabled = true;
+    }
+
+    /**
      * Configuration for composite tracking headers that are injected into each outbound
      * sub-request.
      *
      * <p>When {@code enabled} is {@code true}, every sub-request carries three additional
-     * headers that allow downstream services to identify the originating composite request
-     * and the individual sub-request within it.
+     * headers that allow handlers to identify the originating composite request and the
+     * individual sub-request within it. Use them for tracing and auditing only: a direct
+     * client can send the same header names, so they must not be used for authorization.
      *
      * @since 0.0.1
      */
@@ -141,9 +173,9 @@ public class CompositeProperties {
 
         /**
          * Whether composite tracking headers are added to each sub-request.
-         * Defaults to {@code false}.
+         * Defaults to {@code true}.
          */
-        private boolean enabled = false;
+        private boolean enabled = true;
 
         /**
          * Header name used to flag a request as a composite sub-request.
@@ -180,10 +212,26 @@ public class CompositeProperties {
          * Names of request headers to propagate from the outer composite request to every
          * sub-request.
          *
-         * <p>Empty by default — headers are <em>not</em> forwarded unless explicitly listed
-         * here. Common values include {@code Authorization}, {@code Cookie}, and
-         * {@code X-API-Key}.
+         * <p>Defaults to {@code Authorization} and {@code Cookie}. Setting this property
+         * replaces the list. Applications using cookie authentication must keep CSRF
+         * protection on the composite endpoint and list their CSRF header here.
          */
-        private List<String> forwardedHeaders = new ArrayList<>();
+        private List<String> forwardedHeaders = new ArrayList<>(List.of("Authorization", "Cookie"));
+
+        /**
+         * Names of headers a client may set on an individual sub-request.
+         *
+         * <p>Any other header is rejected during validation. Credential, proxy, identity,
+         * hop-by-hop and composite tracking headers are always refused, even if listed.
+         */
+        private List<String> clientAllowedHeaders = new ArrayList<>(List.of(
+                "Accept", "Accept-Language", "If-Match", "If-None-Match",
+                "If-Modified-Since", "If-Unmodified-Since"));
+
+        /**
+         * Additional header names clients may never set on a sub-request, such as an
+         * application-specific identity header like {@code X-User-Id}.
+         */
+        private List<String> blockedHeaders = new ArrayList<>();
     }
 }

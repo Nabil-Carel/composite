@@ -14,9 +14,8 @@
  *   <li>{@link io.github.nabilcarel.composite.model.request.SubRequest} — enriches a
  *       {@link io.github.nabilcarel.composite.model.request.SubRequestDto} with lazily-extracted
  *       dependency information and resolved values.</li>
- *   <li>{@link io.github.nabilcarel.composite.model.request.CompositeRequestWrapper} — a
- *       replayable {@link jakarta.servlet.http.HttpServletRequestWrapper} that caches the
- *       request body.</li>
+ *   <li>{@link io.github.nabilcarel.composite.model.request.SubRequestContext} — per-batch
+ *       data captured on the request thread before dispatch.</li>
  * </ul>
  */
 package io.github.nabilcarel.composite.model.request;

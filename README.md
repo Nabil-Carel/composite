@@ -97,7 +97,7 @@ The Composite Endpoint Library makes real HTTP loopback calls to your endpoints,
 
 **How it works:**
 
-- **Authentication Forwarding**: The library automatically forwards authentication headers and cookies from the parent composite request to all subrequests
+- **Authentication Forwarding**: `Authorization` and `Cookie` are forwarded from the parent composite request to all subrequests by default. Change the list with `composite.security.forwarded-headers`
 - **Authorization**: Each subrequest goes through your Spring Security filter chain exactly as a direct HTTP call would
 - **Method Security**: `@PreAuthorize`, `@Secured`, and other method-level annotations work normally
 - **No Privilege Escalation**: Composite requests can only access endpoints the calling user is authorized to access
@@ -113,7 +113,7 @@ The Composite Endpoint Library makes real HTTP loopback calls to your endpoints,
 ```java
 @GetMapping("/admin/users")
 @PreAuthorize("hasRole('ADMIN')")
-@CompositeEndpoint(List.class)
+@CompositeEndpoint
 public List<User> getUsers() {
     // Only accessible to admins
 }
@@ -128,7 +128,20 @@ The library automatically injects tracking headers to identify composite-initiat
 - `X-Composite-Request-Id: <unique-id>`
 - `X-Composite-Sub-Request-Id: <reference-id>`
 
-These can be used for auditing, logging, or custom security policies.
+Use these for auditing and logging only. A direct client can send the same header names, so they must not be used for authorization.
+
+**Sub-request safety rules:**
+
+- Targets must be application-relative paths. Absolute URLs, `//host`, dot segments, fragments and path parameters are rejected.
+- A sub-request runs only if the handler Spring selects has `@CompositeEndpoint`. This also applies to handlers from other handler mappings, such as Actuator endpoints on the main port, which are refused with `403`.
+- Clients can set only headers in `composite.security.client-allowed-headers`. Credential, proxy, identity and hop-by-hop headers are always refused, and so is any header on `composite.security.forwarded-headers`, so a caller cannot swap in another credential for one sub-request.
+- Forwarded headers are copied exactly as the caller sent them. Forward only credentials. If your app trusts a header such as `X-Forwarded-For` because a proxy sets it, forwarding it lets callers' values through unchecked.
+- Response values are substituted once, so stored data cannot act as a `${...}` reference.
+- Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
+- The caller stays authenticated for the async batch response when the app uses Spring Security's default security context repositories. A custom `SecurityContextRepository` must support async dispatches.
+- A gateway only sees the outer composite URL. Protect annotated endpoints with application-level authorization rather than relying only on gateway path rules.
+- Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
+- At `INFO` and above, Composite logs reference IDs, statuses and failure types, never sub-request URLs, headers or response bodies. Rejected requests and error responses are logged at `DEBUG`, where validation messages can include the submitted URL.
 
 ## Installation
 
@@ -148,13 +161,13 @@ Official release and simplified installation instructions will be provided in a 
 public class AccountController {
 
     @GetMapping("/account/{id}")
-    @CompositeEndpoint(value=Account.class)
+    @CompositeEndpoint
     public Account getAccount(@PathVariable String id) {
         // Your business logic
     }
 }
 ```
-The `value` parameter specifies the return type for proper JSON deserialization.
+References read the JSON response, so `${acc1.user_id}` uses the field name a client sees and cannot reach fields hidden with `@JsonIgnore`.
 
 ### 2. Send a composite request with dependencies
 ```http
@@ -163,7 +176,7 @@ Authorization: Bearer <your-token>
 Content-Type: application/json
 
 {
-  "compositeRequest": [
+  "subRequests": [
     {
       "method": "GET",
       "url": "/api/account/1",
@@ -197,16 +210,85 @@ Content-Type: application/json
 }
 ```
 
+### 4. Configure it if needed
+```properties
+composite.base-path=/api/composite
+composite.controller.enabled=true
+composite.request-timeout=60s
+composite.max-sub-requests-per-composite=25
+composite.max-concurrent-sub-requests=5
+composite.max-depth=10
+composite.security.forwarded-headers=Authorization,Cookie
+composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-None-Match,If-Modified-Since,If-Unmodified-Since
+composite.security.blocked-headers=X-User-Id
+composite.header-injection.enabled=true
+# jdk (default, no extra dependency) or webclient (requires spring-boot-starter-webflux)
+composite.loopback.client=jdk
+composite.loopback.max-response-size=256KB
+# Defaults to half of server.tomcat.threads.max, or half of server.tomcat.max-connections with virtual threads
+composite.loopback.max-connections=100
+composite.max-resolved-size=1MB
+composite.max-request-size=2MB
+```
+
+If `composite.request-timeout` elapses, the response is `504`, in-flight calls are cancelled and unstarted sub-requests do not run. Embedded Tomcat does not report a client disconnect while a batch is waiting, so a disconnected batch continues until it finishes or reaches this timeout. A handler that is already running cannot be stopped, so use idempotency keys on non-idempotent endpoints.
+
+Sub-requests are sent with the non-blocking JDK `HttpClient` by default, so Composite needs no Netty or Reactor Netty. Set `composite.loopback.client=webclient` and add `spring-boot-starter-webflux` to use WebClient instead. Both clients wait for responses without holding a thread.
+
+With `composite.loopback.protocol=https`, loopback calls verify the server certificate against the JVM truststore. `composite.loopback.trust-self-signed-certificates=true` skips that check entirely and is meant for development only. In production, add your certificate to the truststore instead.
+
+`composite.loopback.max-connections` also limits running sub-request handlers across all batches. Above it, calls wait for a connection, or return `503` if timed-out handlers are still running. The limit is shared, so one client sending many slow batches can delay other batch users. Add per-client rate limiting in production.
+
+Unknown request fields are rejected with `400`. Batches are not transactional, so a failed sub-request does not undo earlier ones. A sub-request whose dependency returned anything other than `2xx`, including a redirect or `304`, does not run and returns `424`.
+
+### 5. Stop the batch on the first failure
+```json
+{
+  "stopOnFailure": true,
+  "subRequests": [
+    { "method": "POST", "url": "/api/orders", "referenceId": "order", "body": { "sku": "A1" } },
+    { "method": "POST", "url": "/api/payments", "referenceId": "payment", "body": { "orderId": "${order.id}" } }
+  ]
+}
+```
+
+With `stopOnFailure`, the first non-2xx sub-response stops the rest of the batch:
+
+- Sub-requests that never started return `424`.
+- In-flight calls are cancelled and return `503`. Their handlers may have already run, so treat their outcome as unknown.
+- Completed work is **not** rolled back. Use one transactional endpoint when an operation must be all-or-nothing.
+
+### 6. Replace an implementation
+
+Every default service can be replaced by declaring a bean of its interface. To change how sub-requests are sent, implement `SubRequestDispatcher`:
+
+```java
+@Bean
+SubRequestDispatcher customDispatcher() {
+    return (request, cancellation) -> sendToThisApplication(request, cancellation);
+}
+```
+
+A dispatcher must only call the current application and must not follow redirects.
+
+### 7. Observe it with Java Flight Recorder
+
+The library emits `io.github.nabilcarel.composite.Batch` and `io.github.nabilcarel.composite.SubRequest` JFR events. They include timing, status, outcome and the route pattern, but never resolved URLs, headers or bodies.
+
+```bash
+java -XX:StartFlightRecording=filename=composite.jfr,settings=profile -jar your-app.jar
+```
+
 ## How It Works
 
 The Composite Endpoint Library acts as an intelligent request orchestrator that coordinates multiple HTTP calls to your existing endpoints.
 
 ### Request Processing Flow
 
-1. **Request Interception**: A filter intercepts incoming requests to `/api/composite/execute`
+1. **Request Acceptance**: Spring MVC authenticates, negotiates and binds the request to `/api/composite/execute`
 2. **Validation**: Validates the composite request structure and checks for circular dependencies
 3. **Dependency Analysis**: Parses subrequests and builds a dependency graph
-4. **Parallel Execution**: Independent requests execute in parallel using WebFlux's `WebClient`
+4. **Parallel Execution**: Independent requests execute in parallel through a non-blocking HTTP client
 5. **Loopback Calls**: Each subrequest makes an HTTP call back to `localhost` hitting your actual endpoints
 6. **Response Tracking**: Results are captured and stored, making them available for dependent requests
 7. **Reference Resolution**: Subsequent requests can reference earlier results using `${refId.property}` syntax
@@ -222,7 +304,7 @@ The Composite Endpoint Library acts as an intelligent request orchestrator that 
 
 **No business logic changes**: Your existing controllers remain unchanged. The library only adds orchestration and response aggregation.
 
-**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and uses Jackson's JSON path-like resolution to extract the `id` property.
+**Dependency resolution is simple**: When a request references `${acc1.id}`, the library looks up `acc1` in the results map and reads `id` from its JSON response.
 
 ### Request Flow Example
 ```
@@ -230,7 +312,7 @@ POST /api/composite/execute
 Authorization: Bearer <token>
 
 {
-  "compositeRequest": [
+  "subRequests": [
     { "method": "GET", "url": "/api/account/123", "referenceId": "acc1" },
     { "method": "GET", "url": "/api/orders/${acc1.id}", "referenceId": "orders1" }
   ]
@@ -239,8 +321,8 @@ Authorization: Bearer <token>
 
 **What happens internally:**
 
-1. Filter intercepts the composite request and validates structure
-2. First subrequest: WebClient makes GET to `http://localhost:8080/api/account/123`
+1. The composite controller receives the accepted request and validates its structure
+2. First subrequest: the loopback client makes GET to `http://localhost:8080/api/account/123`
     - Authorization header automatically forwarded from parent request
     - Request goes through full Spring Security filter chain
     - Hits `AccountController.getAccount(123)`
@@ -248,7 +330,7 @@ Authorization: Bearer <token>
     - Stored in results map as `acc1`
 3. Second subrequest: `${acc1.id}` resolved to `123`
     - URL becomes `/api/orders/123`
-    - WebClient makes GET to `http://localhost:8080/api/orders/123`
+    - The loopback client makes GET to `http://localhost:8080/api/orders/123`
     - Authorization header forwarded again
     - Goes through Spring Security again
     - Hits `OrderController.getOrders(123)`
@@ -264,16 +346,6 @@ Authorization: Bearer <token>
 - **Simple debugging**: Set breakpoints in your actual controller methods
 - **Request tracing**: Standard HTTP tracing/monitoring tools work on subrequests
 - **Header injection**: Library adds tracking headers to identify composite-initiated requests
-
-## Example Endpoints
-
-The library can automatically register endpoints like:
-
-- `GET /api/composite/test`
-- `POST /api/composite/testPost`
-- `GET /api/composite/helloWorld`
-- `GET /api/composite/data`
-- `GET /api/composite/data/{id}`
 
 ## Frontend Benefits
 
@@ -326,11 +398,11 @@ Yes, the default maximum is 25 sub-requests per composite call (matching Salesfo
 
 ### How does this handle request/response size limits?
 
-Composite requests are subject to normal Spring Boot request size limits (`server.servlet.max-request-size`). Large batches with big payloads may need to be split into smaller composite requests to stay within these limits.
+Composite requests are subject to normal Spring Boot request size limits (`server.servlet.max-request-size`). Large batches with big payloads may need to be split into smaller composite requests to stay within these limits. Each sub-response is limited to 256 KB by default. A larger one fails with `503` unless you raise `composite.loopback.max-response-size`.
 
 ### Does this work with Spring WebFlux or other Java frameworks?
 
-No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). While it uses WebFlux's `WebClient` internally for making HTTP calls, the library itself requires servlet-based request handling. Pure Spring WebFlux (reactive) applications are not currently supported.
+No, this library is designed specifically for Spring Boot applications using Spring Web MVC (`spring-boot-starter-web`). The library requires servlet-based request handling. Pure Spring WebFlux (reactive) applications are not currently supported.
 
 ### What happens if one request in the batch fails?
 

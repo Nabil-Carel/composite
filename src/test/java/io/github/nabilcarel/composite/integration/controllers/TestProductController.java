@@ -11,7 +11,7 @@ import java.util.Map;
 public class TestProductController {
 
     @GetMapping
-    @CompositeEndpoint(ProductList.class)
+    @CompositeEndpoint
     public ProductList getAllProducts() {
         return new ProductList(List.of(
             new Product("prod1", "Product 1", 10.0),
@@ -21,13 +21,13 @@ public class TestProductController {
     }
 
     @GetMapping("/{productId}")
-    @CompositeEndpoint(Product.class)
+    @CompositeEndpoint
     public Product getProduct(@PathVariable("productId") String productId) {
         return new Product(productId, "Product " + productId, 25.0);
     }
 
     @GetMapping("/{productId}/reviews")
-    @CompositeEndpoint(ReviewList.class)
+    @CompositeEndpoint
     public ReviewList getProductReviews(@PathVariable("productId") String productId) {
         return new ReviewList(List.of(
             new Review("review1", productId, 5, "Great product!"),
@@ -36,7 +36,7 @@ public class TestProductController {
     }
 
     @GetMapping("/{productId}/metadata")
-    @CompositeEndpoint(Map.class)
+    @CompositeEndpoint
     public Map<String, Object> getProductMetadata(@PathVariable("productId") String productId) {
         return Map.of(
             "productId", productId,

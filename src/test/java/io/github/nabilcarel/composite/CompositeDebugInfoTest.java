@@ -5,40 +5,36 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.config.EndpointRegistry;
 import io.github.nabilcarel.composite.config.EndpointRegistry.EndpointInfo;
-import io.github.nabilcarel.composite.config.filter.CompositeRequestFilter;
-import io.github.nabilcarel.composite.model.ResponseTracker;
+import io.github.nabilcarel.composite.internal.ActiveBatches;
+import io.github.nabilcarel.composite.internal.BatchExecution;
+import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import io.github.nabilcarel.composite.model.response.CompositeDebugInfo;
 import io.github.nabilcarel.composite.model.response.CompositeResponse;
 import io.github.nabilcarel.composite.model.response.SubResponse;
+import io.github.nabilcarel.composite.model.request.CompositeRequest;
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.request.SubRequestContext;
 import io.github.nabilcarel.composite.model.request.SubRequestDto;
 import io.github.nabilcarel.composite.service.*;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationContext;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -66,13 +62,15 @@ class CompositeDebugInfoTest {
     @Mock
     private ClientResponse clientResponse;
     @Mock
-    private ResponseTracker responseTracker;
+    private ClientResponse.Headers clientResponseHeaders;
+    @Mock
+    private BatchExecution batch;
     @Mock
     private HttpServletRequest servletRequest;
 
     private ObjectMapper objectMapper;
     private CompositeProperties properties;
-    private ConcurrentMap<String, ResponseTracker> responseStore;
+    private ActiveBatches activeBatches;
     private CompositeRequestServiceImpl service;
 
     private static final String REQUEST_ID = "test-request-id";
@@ -83,19 +81,26 @@ class CompositeDebugInfoTest {
         objectMapper = new ObjectMapper();
         properties = new CompositeProperties();
         properties.setRequestTimeout(Duration.ofSeconds(30));
-        responseStore = new ConcurrentHashMap<>();
-        responseStore.put(REQUEST_ID, responseTracker);
+        activeBatches = new ActiveBatches();
 
         service = new CompositeRequestServiceImpl(
             endpointRegistry,
             objectMapper,
-            responseStore,
+            activeBatches,
             compositeRequestValidator,
             referenceResolver,
             properties,
             authForwardingService,
-            webClient
+            new WebClientSubRequestDispatcher(webClient),
+            new io.github.nabilcarel.composite.internal.DispatchMarker()
         );
+    }
+
+    private BatchExecution batchWith(SubRequestContext context) {
+        lenient().when(batch.id()).thenReturn(REQUEST_ID);
+        lenient().when(batch.context()).thenReturn(context);
+        lenient().when(batch.responses()).thenReturn(Map.of());
+        return batch;
     }
 
     // ========== Debug Enabled Tests ==========
@@ -104,23 +109,23 @@ class CompositeDebugInfoTest {
     void forwardSubrequest_whenDebugEnabled_capturesOriginalAndResolvedUrl() {
         properties.setDebugEnabled(true);
         SubRequest subRequest = createSubRequest("/api/users/${dep.id}", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
                 .resolvedRequests(new ConcurrentHashMap<>())
                 .build();
-        when(servletRequest.getAttribute("compositeDebug")).thenReturn(debugInfo);
+        SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), debugInfo);
 
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/42");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -133,13 +138,13 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(true);
         JsonNode body = objectMapper.readTree("{\"userId\": \"${dep.id}\"}");
         SubRequest subRequest = createSubRequestWithBody("/api/orders", "POST", body);
-        EndpointInfo endpointInfo = createEndpointInfo("/api/orders", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/orders");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
                 .resolvedRequests(new ConcurrentHashMap<>())
                 .build();
-        when(servletRequest.getAttribute("compositeDebug")).thenReturn(debugInfo);
+        SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), debugInfo);
 
         // Simulate reference resolver modifying the body in-place
         doAnswer(invocation -> {
@@ -148,16 +153,16 @@ class CompositeDebugInfoTest {
             ((com.fasterxml.jackson.databind.node.ObjectNode) req.getBody())
                 .put("userId", "resolved-42");
             return null;
-        }).when(referenceResolver).resolveBody(any(), anyString());
+        }).when(referenceResolver).resolveBody(any(), anyMap());
 
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(Map.class))).thenReturn(Mono.just(Map.of("orderId", "new-order")));
+        stubJsonBody(Map.of("orderId", "new-order"));
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/orders");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
@@ -167,7 +172,7 @@ class CompositeDebugInfoTest {
             return handler.apply(clientResponse);
         });
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -182,23 +187,23 @@ class CompositeDebugInfoTest {
         properties.setDebugEnabled(true);
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
         subRequest.getSubRequestDto().getHeaders().put("Authorization", "Bearer secret-token");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
                 .dependencyGraph(Map.of())
                 .resolvedRequests(new ConcurrentHashMap<>())
                 .build();
-        when(servletRequest.getAttribute("compositeDebug")).thenReturn(debugInfo);
+        SubRequestContext requestContext = new SubRequestContext(new HttpHeaders(), debugInfo);
 
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        service.forwardSubrequest(subRequest, batchWith(requestContext)).block();
 
         assertThat(debugInfo.getResolvedRequests()).containsKey(REFERENCE_ID);
         CompositeDebugInfo.SubRequestDebugInfo subDebug = debugInfo.getResolvedRequests().get(REFERENCE_ID);
@@ -212,37 +217,32 @@ class CompositeDebugInfoTest {
     void forwardSubrequest_whenDebugDisabled_doesNotCaptureDebugInfo() {
         properties.setDebugEnabled(false);
         SubRequest subRequest = createSubRequest("/api/users/123", "GET");
-        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}", Map.class);
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
 
         setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
         when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
             .thenReturn(Optional.of(endpointInfo));
-        when(referenceResolver.resolveUrl(any(), anyString()))
+        when(referenceResolver.resolveUrl(any(), anyMap()))
             .thenReturn("/api/users/123");
         when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
             .thenReturn(null);
 
-        service.forwardSubrequest(subRequest, REQUEST_ID, servletRequest).block();
+        CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
+                .dependencyGraph(Map.of())
+                .resolvedRequests(new ConcurrentHashMap<>())
+                .build();
 
-        // Should never attempt to get the debug attribute
-        verify(servletRequest, never()).getAttribute("compositeDebug");
+        service.forwardSubrequest(subRequest, batchWith(new SubRequestContext(new HttpHeaders(), debugInfo))).block();
+
+        assertThat(debugInfo.getResolvedRequests()).isEmpty();
     }
 
     @Test
     void execute_whenDebugDisabled_responseHasNoDebugField() throws Exception {
         properties.setDebugEnabled(false);
+        stubSuccessfulExecution();
 
-        when(servletRequest.getAttribute("requestId")).thenReturn(REQUEST_ID);
-        when(servletRequest.getAttribute("hasErrors")).thenReturn(false);
-
-        CompositeResponse compositeResponse = CompositeResponse.builder()
-                .responses(Map.of("ref1", SubResponse.builder().referenceId("ref1").httpStatus(200).build()))
-                .hasErrors(false)
-                .build();
-        when(responseTracker.getFuture())
-            .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(compositeResponse));
-
-        var result = service.execute(servletRequest, mock(HttpServletResponse.class)).get();
+        var result = service.execute(compositeRequest(), servletRequest, mock(jakarta.servlet.http.HttpServletResponse.class)).get();
 
         assertThat(result.getBody()).isNotNull();
         assertThat(result.getBody().getDebug()).isNull();
@@ -251,96 +251,14 @@ class CompositeDebugInfoTest {
     @Test
     void execute_whenDebugEnabled_responseContainsDebugInfo() throws Exception {
         properties.setDebugEnabled(true);
+        stubSuccessfulExecution();
 
-        CompositeDebugInfo debugInfo = CompositeDebugInfo.builder()
-                .dependencyGraph(Map.of("ref1", java.util.Set.of()))
-                .resolvedRequests(new ConcurrentHashMap<>())
-                .build();
-
-        when(servletRequest.getAttribute("requestId")).thenReturn(REQUEST_ID);
-        when(servletRequest.getAttribute("hasErrors")).thenReturn(false);
-        when(servletRequest.getAttribute("compositeDebug")).thenReturn(debugInfo);
-
-        CompositeResponse compositeResponse = CompositeResponse.builder()
-                .responses(Map.of("ref1", SubResponse.builder().referenceId("ref1").httpStatus(200).build()))
-                .hasErrors(false)
-                .build();
-        when(responseTracker.getFuture())
-            .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(compositeResponse));
-
-        var result = service.execute(servletRequest, mock(HttpServletResponse.class)).get();
+        var result = service.execute(compositeRequest(), servletRequest, mock(jakarta.servlet.http.HttpServletResponse.class)).get();
 
         assertThat(result.getBody()).isNotNull();
         assertThat(result.getBody().getDebug()).isNotNull();
-        assertThat(result.getBody().getDebug().getDependencyGraph()).containsKey("ref1");
-    }
-
-    // ========== Filter Debug Tests ==========
-
-    @Test
-    void filter_whenDebugEnabled_setsDebugAttributeOnRequest() throws Exception {
-        CompositeProperties filterProperties = new CompositeProperties();
-        filterProperties.setDebugEnabled(true);
-
-        ApplicationContext context = mock(ApplicationContext.class);
-        CompositeRequestService compositeRequestService = mock(CompositeRequestService.class);
-        when(context.getBean(CompositeRequestService.class)).thenReturn(compositeRequestService);
-        when(compositeRequestService.forwardSubrequest(any(), any(), any())).thenReturn(Mono.empty());
-
-        ConcurrentMap<String, ResponseTracker> store = new ConcurrentHashMap<>();
-        CompositeRequestFilter filter = new CompositeRequestFilter(
-            context,
-            compositeRequestValidator,
-            objectMapper,
-            store,
-            filterProperties
-        );
-
-        String body = "{\"subRequests\":[{\"referenceId\":\"a\",\"method\":\"GET\",\"url\":\"/api/test\"}]}";
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        setupServletRequest(mockRequest, body);
-        when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
-
-        FilterChain chain = mock(FilterChain.class);
-        filter.doFilter(mockRequest, mock(HttpServletResponse.class), chain);
-
-        ArgumentCaptor<CompositeDebugInfo> debugCaptor = ArgumentCaptor.forClass(CompositeDebugInfo.class);
-        verify(mockRequest).setAttribute(eq("compositeDebug"), debugCaptor.capture());
-
-        CompositeDebugInfo captured = debugCaptor.getValue();
-        assertThat(captured).isNotNull();
-        assertThat(captured.getDependencyGraph()).containsKey("a");
-        assertThat(captured.getResolvedRequests()).isEmpty();
-    }
-
-    @Test
-    void filter_whenDebugDisabled_doesNotSetDebugAttribute() throws Exception {
-        CompositeProperties filterProperties = new CompositeProperties();
-        filterProperties.setDebugEnabled(false);
-
-        ApplicationContext context = mock(ApplicationContext.class);
-        CompositeRequestService compositeRequestService = mock(CompositeRequestService.class);
-        when(context.getBean(CompositeRequestService.class)).thenReturn(compositeRequestService);
-        when(compositeRequestService.forwardSubrequest(any(), any(), any())).thenReturn(Mono.empty());
-
-        ConcurrentMap<String, ResponseTracker> store = new ConcurrentHashMap<>();
-        CompositeRequestFilter filter = new CompositeRequestFilter(
-            context,
-            compositeRequestValidator,
-            objectMapper,
-            store,
-            filterProperties
-        );
-
-        String body = "{\"subRequests\":[{\"referenceId\":\"a\",\"method\":\"GET\",\"url\":\"/api/test\"}]}";
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        setupServletRequest(mockRequest, body);
-        when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
-
-        FilterChain chain = mock(FilterChain.class);
-        filter.doFilter(mockRequest, mock(HttpServletResponse.class), chain);
-
-        verify(mockRequest, never()).setAttribute(eq("compositeDebug"), any());
+        assertThat(result.getBody().getDebug().getDependencyGraph()).containsKey(REFERENCE_ID);
+        assertThat(result.getBody().getDebug().getResolvedRequests()).containsKey(REFERENCE_ID);
     }
 
     // ========== JSON Serialization Test ==========
@@ -399,12 +317,18 @@ class CompositeDebugInfoTest {
         return subRequest;
     }
 
-    private EndpointInfo createEndpointInfo(String pattern, Class<?> returnClass) {
+    private EndpointInfo createEndpointInfo(String pattern) {
         return EndpointInfo.builder()
             .pattern(pattern)
             .method("GET")
-            .returnClass(returnClass)
             .build();
+    }
+
+    private void stubJsonBody(Object body) {
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.of(MediaType.APPLICATION_JSON));
+        when(clientResponse.bodyToMono(String.class))
+            .thenReturn(Mono.just(objectMapper.valueToTree(body).toString()));
     }
 
     private <T> void setupSuccessfulWebClientMock(T responseBody, Class<T> responseClass) {
@@ -413,7 +337,7 @@ class CompositeDebugInfoTest {
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.OK);
-        when(clientResponse.bodyToMono(eq(responseClass))).thenReturn(Mono.just(responseBody));
+        stubJsonBody(responseBody);
 
         when(requestBodySpec.exchangeToMono(any())).thenAnswer(invocation -> {
             java.util.function.Function<ClientResponse, Mono<?>> handler = invocation.getArgument(0);
@@ -421,32 +345,25 @@ class CompositeDebugInfoTest {
         });
     }
 
-    private void setupServletRequest(HttpServletRequest request, String body) throws IOException {
-        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+    private CompositeRequest compositeRequest() {
+        return CompositeRequest.builder()
+            .subRequests(java.util.List.of(SubRequestDto.builder()
+                .url("/api/users/123")
+                .method("GET")
+                .referenceId(REFERENCE_ID)
+                .build()))
+            .build();
+    }
 
-        ServletInputStream stream = new ServletInputStream() {
-            private final ByteArrayInputStream byteStream = new ByteArrayInputStream(bodyBytes);
-
-            @Override
-            public int read() {
-                return byteStream.read();
-            }
-
-            @Override
-            public boolean isFinished() {
-                return byteStream.available() == 0;
-            }
-
-            @Override
-            public boolean isReady() {
-                return true;
-            }
-
-            @Override
-            public void setReadListener(jakarta.servlet.ReadListener readListener) {
-            }
-        };
-
-        when(request.getInputStream()).thenReturn(stream);
+    private void stubSuccessfulExecution() {
+        EndpointInfo endpointInfo = createEndpointInfo("/api/users/{id}");
+        when(compositeRequestValidator.validateRequest(any())).thenReturn(java.util.List.of());
+        setupSuccessfulWebClientMock(Map.of("id", "123"), Map.class);
+        when(endpointRegistry.getEndpointInformations(anyString(), anyString()))
+            .thenReturn(Optional.of(endpointInfo));
+        when(referenceResolver.resolveUrl(any(), anyMap()))
+            .thenReturn("/api/users/123");
+        when(compositeRequestValidator.validateResolvedUrlFormat(anyString()))
+            .thenReturn(null);
     }
 }

@@ -1,514 +1,218 @@
 package io.github.nabilcarel.composite.service;
 
-import static io.github.nabilcarel.composite.util.Patterns.*;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.exception.ReferenceResolutionException;
-import io.github.nabilcarel.composite.exception.UnresolvedReferenceException;
 import io.github.nabilcarel.composite.model.NodeReference;
-import io.github.nabilcarel.composite.model.PlaceholderResolution;
-import io.github.nabilcarel.composite.model.ResponseTracker;
 import io.github.nabilcarel.composite.model.request.SubRequest;
 import io.github.nabilcarel.composite.model.response.SubResponse;
-import java.lang.reflect.Array;
-import java.util.Collection;
-import java.util.List;
+import io.github.nabilcarel.composite.util.ReferencePath;
+import io.github.nabilcarel.composite.util.ReferenceTemplate;
+import io.github.nabilcarel.composite.util.SubRequestTarget;
+import java.math.BigDecimal;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentMap;
-import java.util.regex.Matcher;
-import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.BeanWrapperImpl;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.stereotype.Service;
-import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * Default {@link ReferenceResolverService} implementation that resolves
- * {@code ${referenceId.propertyPath}} placeholder expressions by navigating the response
- * bodies stored in the shared {@link ResponseTracker} map.
+ * {@code ${referenceId.propertyPath}} placeholder expressions against the JSON responses
+ * already recorded for the batch.
  *
- * <p>Property path navigation supports four access modes:
- * <ol>
- *   <li><strong>Bean property</strong> (POJO) — via
- *       {@link org.springframework.beans.BeanWrapperImpl BeanWrapperImpl}, supporting both
- *       dot ({@code user.address.city}) and bracket ({@code user[address][city]})
- *       notation.</li>
- *   <li><strong>Map key</strong> — dot notation for simple keys; quoted bracket notation
- *       ({@code config['db.host']}) for keys containing dots or other separators.</li>
- *   <li><strong>List / Collection index</strong> — bracket numeric index notation
- *       ({@code items[0]}), with optional chained navigation ({@code items[0].name}).</li>
- *   <li><strong>Array index</strong> — same bracket notation as above, using
- *       {@link java.lang.reflect.Array#get(Object, int) Array.get}.</li>
- * </ol>
+ * <p>Paths are navigated by {@link ReferencePath}, so they use the JSON field names a client
+ * sees. A placeholder that is an entire body value keeps its JSON type. A placeholder inside
+ * a URL, a header or larger text must refer to a string, number or boolean.
  *
- * <p>Multi-pass resolution is performed iteratively up to
- * {@code composite.max-resolution-iterations} times to handle nested
- * placeholders. Resolution terminates early when a pass produces no changes.
+ * <p>Client templates are compiled once and substituted once. Inserted values are never
+ * scanned again, so stored response data cannot act as a placeholder. URL values are
+ * encoded for their position by {@link SubRequestTarget}.
  *
- * <p>Header values are sanitised after resolution to strip CRLF characters, preventing
+ * <p>Header values are sanitised after resolution to strip control characters, preventing
  * HTTP header injection.
  *
  * @see ReferenceResolverService
- * @see io.github.nabilcarel.composite.util.Patterns
  * @since 0.0.1
  */
-@Service
 @RequiredArgsConstructor
 public class ReferenceResolverServiceImpl implements ReferenceResolverService {
 
-    private final ConcurrentMap<String, ResponseTracker> responseStore;
     @Qualifier("compositeObjectMapper")
     private final ObjectMapper mapper;
     private final CompositeProperties properties;
 
-    private int getMaxResolutionIterations() {
-        return properties.getMaxResolutionIterations();
+    /** Tracks how much referenced data has been inserted into one part of a sub-request. */
+    private static final class ResolutionBudget {
+        private long remaining;
+
+        private ResolutionBudget(long limit) {
+            this.remaining = limit;
+        }
+
+        private void charge(long size, String expression) {
+            remaining -= size;
+            if (remaining < 0) {
+                throw new ReferenceResolutionException(
+                        "Referenced data is too large for one sub-request. Reference smaller values.", expression);
+            }
+        }
+
+        private void charge(JsonNode value, String expression) {
+            Deque<JsonNode> pending = new ArrayDeque<>();
+            pending.push(value);
+
+            while (!pending.isEmpty()) {
+                JsonNode node = pending.pop();
+                if (node.isObject()) {
+                    node.fields().forEachRemaining(field -> {
+                        charge(field.getKey().length(), expression);
+                        pending.push(field.getValue());
+                    });
+                } else if (node.isArray()) {
+                    node.forEach(pending::push);
+                } else {
+                    charge(node.isTextual() ? node.textValue().length() : node.asText().length(), expression);
+                }
+            }
+        }
     }
 
-    public String resolveUrl(SubRequest subRequest, String batchId) {
-        String url = resolveNestedPlaceholders(subRequest.getUrl(), batchId);
-        url = UriComponentsBuilder.fromUriString(url).build().encode().toUriString();
+    private ResolutionBudget newBudget() {
+        return new ResolutionBudget(properties.getMaxResolvedSize().toBytes());
+    }
+
+    public String resolveUrl(SubRequest subRequest, Map<String, SubResponse> responses) {
+        ResolutionBudget budget = newBudget();
+        String url = SubRequestTarget.parse(subRequest.getUrl())
+                .render(expression -> resolveToText(expression, responses, budget));
         subRequest.setResolvedUrl(url);
         return url;
     }
 
-    public void resolveHeaders(SubRequest subRequest, String batchId) {
+    public void resolveHeaders(SubRequest subRequest, Map<String, SubResponse> responses) {
         if(subRequest.getHeaders() == null || subRequest.getHeaders().isEmpty()) {
             return;
         }
 
+        ResolutionBudget budget = newBudget();
         subRequest.setResolvedHeaders(subRequest.getHeaders().entrySet().stream().collect(
                 java.util.stream.Collectors.toMap(
                         java.util.Map.Entry::getKey,
-                        entry -> sanitizeHeaderValue(resolveNestedPlaceholders(entry.getValue(), batchId))
+                        entry -> sanitizeHeaderValue(ReferenceTemplate.parse(entry.getValue())
+                                .render(expression -> resolveToText(expression, responses, budget)))
                 )
         ));
     }
 
     /**
-     * Sanitizes header values to prevent CRLF injection attacks.
-     * Strips carriage return and line feed characters from resolved values.
+     * Sanitizes header values to prevent header injection attacks.
+     * Strips control characters, including carriage return and line feed.
      */
     private String sanitizeHeaderValue(String value) {
         if (value == null) {
             return null;
         }
-        return value.replaceAll("[\r\n]", "");
+        return value.replaceAll("\\p{Cntrl}", "");
     }
 
-    public void resolveBody(SubRequest subRequest, String batchId) {
+    public void resolveBody(SubRequest subRequest, Map<String, SubResponse> responses) {
         if (subRequest.getBody() == null) {
+            return;
+        }
+
+        ResolutionBudget budget = newBudget();
+
+        if (subRequest.getBody().isTextual()) {
+            JsonNode resolved = resolveTextValue(subRequest.getBody().textValue(), responses, budget);
+            if (resolved != null) {
+                subRequest.setBody(resolved);
+            }
             return;
         }
 
         subRequest.initNodeReferences();
 
-        if (subRequest.getNodeReferences().isEmpty()) {
-            return;
-        }
-
         for (NodeReference nodeRef : subRequest.getNodeReferences()) {
-            String text = nodeRef.getValue().asText();
-            Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
-
-            if(!matcher.find()) {
-                continue; // Nothing to replace
-            }
-
-            matcher.reset();
-
-            // Entire value matches the placeholder pattern
-            if(matcher.matches()) {
-                String resolvedText = resolveNestedPlaceholders(text, batchId);
-
-                // Check if fully resolved (no more ${} patterns)
-                if (!PLACEHOLDER_PATTERN.matcher(resolvedText).find()) {
-                    // Fully resolved - preserve original type
-                    Object resolvedObject = parseResolvedValue(resolvedText, resolvedText, batchId);
-                    JsonNode node = mapper.valueToTree(resolvedObject);
-                    nodeRef.overrideValue(node);
-                } else {
-                    // Still has unresolved placeholders
-                    throw new ReferenceResolutionException("Could not fully resolve placeholder", text);
-                }
-            }
-            else {
-                // Multiple placeholders or mixed content: "Hello ${user.name}, order #${order.id}!"
-                String resolvedText = resolveNestedPlaceholders(text, batchId);
-
-                // Check if all placeholders were resolved
-                if (PLACEHOLDER_PATTERN.matcher(resolvedText).find()) {
-                    throw new IllegalArgumentException("Could not fully resolve all placeholders in: " + text);
-                }
-
-                nodeRef.overrideValue(new TextNode(resolvedText));
+            JsonNode resolved = resolveTextValue(nodeRef.getValue().asText(), responses, budget);
+            if (resolved != null) {
+                nodeRef.overrideValue(resolved);
             }
         }
     }
 
-    /**
-     * Resolves nested placeholders iteratively until no more ${} patterns exist
-     */
-    private String resolveNestedPlaceholders(String input, String batchId) {
-        String result = input;
-        String previous;
-        int iteration = 0;
+    /** Returns the resolved value, or {@code null} when the text contains no references. */
+    private JsonNode resolveTextValue(String text, Map<String, SubResponse> responses, ResolutionBudget budget) {
+        ReferenceTemplate template = ReferenceTemplate.parse(text);
 
-        do {
-            previous = result;
-            result = resolveSinglePass(result, batchId);
-            iteration++;
-        } while (!result.equals(previous) && iteration < getMaxResolutionIterations());
-
-        if (iteration >= getMaxResolutionIterations()) {
-            throw new IllegalArgumentException("Maximum resolution iterations exceeded. Possible circular reference in: " + input);
+        if (!template.hasReferences()) {
+            return null;
         }
 
-        return result;
-    }
-
-    /**
-     * Single pass resolution of all ${} placeholders in the input
-     */
-    private String resolveSinglePass(String input, String batchId) {
-        // Find innermost placeholders first (those without nested ${})
-        Matcher matcher = INNERMOST_PATTERN.matcher(input);
-        StringBuffer result = new StringBuffer();
-
-        while (matcher.find()) {
-            try {
-                PlaceholderResolution placeholder = resolvePlaceholder(matcher, batchId);
-                String replacement = getResolvedValue(placeholder.root(), placeholder.objectId(),
-                        placeholder.propertyPath());
-                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
-            } catch (UnresolvedReferenceException e) {
-                // Leave unresolved placeholders as-is for next iteration
-                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
-            }
+        if (template.isSingleReference()) {
+            // Entire value is one reference, so it keeps its original type
+            String expression = template.tokens().get(0).text();
+            JsonNode value = resolveNonNull(expression, responses);
+            budget.charge(value, expression);
+            return value.deepCopy();
         }
 
-        matcher.appendTail(result);
-        return result.toString();
+        // Mixed content: "Hello ${user.name}, order #${order.id}!"
+        return new TextNode(template.render(expression -> resolveToText(expression, responses, budget)));
     }
 
-    /**
-     * For single placeholder that occupies entire value, try to preserve original type
-     */
-    private Object parseResolvedValue(String resolvedText, String originalExpression, String batchId) {
-        try {
-            PlaceholderResolution placeholder = parseExpression(originalExpression, batchId);
-            return getResolvedObject(placeholder.root(), placeholder.objectId(),
-                    placeholder.propertyPath());
-        } catch (Exception e) {
-            // Fallback to string value
-            return resolvedText;
+    private JsonNode resolveNonNull(String expression, Map<String, SubResponse> responses) {
+        JsonNode value = resolve(expression, responses);
+        if (value.isNull()) {
+            throw new ReferenceResolutionException("${" + expression + "} is null. Reference a field that has a value.", expression);
         }
+        return value;
     }
 
-    /**
-     * Resolves the value of a property path on an object identified by objectId.
-     */
-    private String getResolvedValue(Object root, String objectId, String propertyPath) {
-        Object value = getResolvedObject(root, objectId, propertyPath);
-        if (value == null) {
+    private String resolveToText(String expression, Map<String, SubResponse> responses, ResolutionBudget budget) {
+        JsonNode value = resolveNonNull(expression, responses);
+
+        if (!value.isValueNode()) {
             throw new ReferenceResolutionException(
-                    "Resolved value is null for path '" + propertyPath + "' on object '" + objectId + "'",
-                    objectId);
+                    "${" + expression + "} is an object or array, so it cannot be used in a URL, header or larger text. "
+                            + "Reference a field inside it, or use it as an entire body value.", expression);
         }
-        return value.toString();
+
+        // Charge plain decimals by their rendered length, which an exponent can make very large.
+        if (value.isBigDecimal()) {
+            BigDecimal decimal = value.decimalValue();
+            budget.charge(Math.abs((long) decimal.scale()) + decimal.precision() + 2L, expression);
+            return decimal.toPlainString();
+        }
+
+        String text = value.asText();
+        budget.charge(text.length(), expression);
+        return text;
     }
 
-    private Object getResolvedObject(Object root, String objectId, String propertyPath) {
-        if (root == null) {
-            throw new IllegalArgumentException("No object found for id: " + objectId);
-        }
+    private JsonNode resolve(String expression, Map<String, SubResponse> responses) {
+        ReferencePath path = ReferencePath.parse(expression);
+        String referenceId = path.referenceId();
 
-        if (root instanceof Map) {
-            return handleMapAccess((Map<?, ?>) root, propertyPath);
-        } else if (root.getClass().isArray()) {
-            return handleArrayAccess(root, propertyPath, objectId);
-        } else if (root instanceof Collection) {
-            return handleCollectionAccess((Collection<?>) root, propertyPath, objectId);
-        }
-        else {
-
-            BeanWrapperImpl wrapper = new BeanWrapperImpl(root);
-            Object value;
-
-            try {
-                // BeanWrapper handles both dot notation (user.name) and bracket notation (user[name], users[0])
-                value = wrapper.getPropertyValue(propertyPath);
-            } catch (Exception e) {
-                throw new IllegalArgumentException("Failed to resolve property path '" + propertyPath +
-                        "' on object '" + objectId + "'", e);
-            }
-
-            return value;
-        }
-    }
-
-    private PlaceholderResolution resolvePlaceholder(@NonNull Matcher matcher, @NonNull String batchId) {
-        String expression = matcher.group(1);
-        return parseExpression(expression, batchId);
-    }
-
-    /**
-     * Parses expressions to handle both dot and bracket notation:
-     * - user.name -> objectId="user", propertyPath="name"
-     * - user['name'] -> objectId="user", propertyPath="['name']"
-     * - users[0].name -> objectId="users", propertyPath="[0].name"
-     * - config['database.host'] -> objectId="config", propertyPath="['database.host']"
-     */
-    private PlaceholderResolution parseExpression(String expression, String batchId) {
-        // If expression still contains ${}, it's not fully resolved yet
-        if (PLACEHOLDER_PATTERN.matcher(expression).find()) {
-            throw new UnresolvedReferenceException(
-                    "Expression contains unresolved placeholders: " + expression
-            );
-        }
-
-        // Find the root object name (everything before first . or [)
-        String objectId;
-        String propertyPath;
-
-        int dotIndex = expression.indexOf('.');
-        int bracketIndex = expression.indexOf('[');
-
-        // Determine where the object name ends
-        int separatorIndex = -1;
-        if (dotIndex != -1 && bracketIndex != -1) {
-            separatorIndex = Math.min(dotIndex, bracketIndex);
-        } else if (dotIndex != -1) {
-            separatorIndex = dotIndex;
-        } else if (bracketIndex != -1) {
-            separatorIndex = bracketIndex;
-        }
-
-        if (separatorIndex == -1) {
-            // No property path, just the object itself
-            objectId = expression;
-            propertyPath = null;
-        } else {
-            objectId = expression.substring(0, separatorIndex);
-            propertyPath = expression.substring(separatorIndex);
-
-            // If starts with dot, remove it (BeanWrapper expects "name" not ".name")
-            if (propertyPath.startsWith(".")) {
-                propertyPath = propertyPath.substring(1);
-            }
-        }
-
-        ResponseTracker tracker = responseStore.get(batchId);
-
-        if(tracker == null) {
-            throw new ReferenceResolutionException(
-                    "No responses found for batch ID: " + batchId,
-                    objectId
-            );
-        }
-
-        Map<String, SubResponse> subResponseMap = tracker.getSubResponseMap();
-
-        if (subResponseMap == null) {
-            throw new IllegalArgumentException("Response map not initialized for batch ID: " + batchId);
-        }
-
-        SubResponse subResponse = subResponseMap.get(objectId);
-
+        SubResponse subResponse = responses.get(referenceId);
         if (subResponse == null) {
             throw new ReferenceResolutionException(
-                    "No response found for reference ID: " + objectId,
-                    objectId,
-                    String.join(", ", subResponseMap.keySet())
-            );
+                    "No response found for reference ID: " + referenceId + ". Check the referenceId in the placeholder.",
+                    referenceId,
+                    String.join(", ", responses.keySet()));
         }
 
-        Object root = subResponse.getBody();
-
-        if (root == null) {
+        Object body = subResponse.getBody();
+        if (body == null) {
             throw new ReferenceResolutionException(
-                    "No response body found for reference ID: " + objectId,
-                    objectId,
-                    String.join(", ", responseStore.get(batchId).getSubResponseMap().keySet())
-            );
+                    "No response body found for reference ID: " + referenceId + ". That sub-request returned no content.",
+                    referenceId,
+                    String.join(", ", responses.keySet()));
         }
 
-       // if (propertyPath != null && propertyPath.startsWith("[") && propertyPath.endsWith("]")) {
-            // Just remove the brackets: [database.host] -> database.host
-         //   propertyPath = propertyPath.substring(1, propertyPath.length() - 1);
-        //}
-
-        return new PlaceholderResolution(objectId, propertyPath, root);
-    }
-
-    private Object handleMapAccess(Map<?, ?> map, String propertyPath) {
-        // Handle bracket notation for literal keys: ['key'] or ["key"]
-        if (propertyPath.startsWith("['") || propertyPath.startsWith("[\"")) {
-            char quoteChar = propertyPath.charAt(1);  // ' or "
-            String closingBracket = quoteChar + "]";
-            int endIndex = propertyPath.indexOf(closingBracket);
-
-            if (endIndex == -1) {
-                throw new IllegalArgumentException("Unclosed bracket notation in: " + propertyPath);
-            }
-
-            // Extract literal key: ['database.host'] -> "database.host"
-            String literalKey = propertyPath.substring(2, endIndex);
-            Object value = map.get(literalKey);
-
-            if (value == null && !map.containsKey(literalKey)) {
-                throw new ReferenceResolutionException(
-                        "Property '" + literalKey + "' not found in response. Available keys: " + map.keySet(),
-                        literalKey);
-            }
-
-            // Check for remaining path after ['key']
-            if (endIndex + 2 < propertyPath.length()) {
-                String remainingPath = propertyPath.substring(endIndex + 2);
-                if (remainingPath.startsWith(".")) {
-                    remainingPath = remainingPath.substring(1);
-                }
-                return getResolvedObject(value, literalKey, remainingPath);
-            }
-
-            return value;
-        }
-
-        // Handle dot notation (nested access)
-        int dotIndex = propertyPath.indexOf('.');
-
-        if (dotIndex == -1) {
-            // Simple key, no nesting
-            Object value = map.get(propertyPath);
-            if (value == null && !map.containsKey(propertyPath)) {
-                throw new ReferenceResolutionException(
-                        "Property '" + propertyPath + "' not found in response. Available keys: " + map.keySet(),
-                        propertyPath);
-            }
-            return value;
-        }
-
-        // Split on first dot
-        String firstKey = propertyPath.substring(0, dotIndex);
-        Object value = map.get(firstKey);
-
-        if (value == null && !map.containsKey(firstKey)) {
-            throw new ReferenceResolutionException(
-                    "Property '" + firstKey + "' not found in response. Available keys: " + map.keySet(),
-                    firstKey);
-        }
-
-        if (value == null) {
-            return null; // Key exists but value is null
-        }
-
-        // Recursively resolve remaining path
-        String remainingPath = propertyPath.substring(dotIndex + 1);
-        return getResolvedObject(value, firstKey, remainingPath);
-    }
-
-    private Object handleCollectionAccess(Collection<?> collection, String propertyPath, String objectId) {
-        // propertyPath could be "[0]" or "[0].id" or "[0].users[1].name"
-        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
-
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
-        }
-
-        try {
-            int index = Integer.parseInt(matcher.group(1));
-
-            // Get element at index
-            Object element;
-            if (collection instanceof List) {
-                element = ((List<?>) collection).get(index);
-            } else {
-                // For Set/other collections, iterate to index
-                int i = 0;
-                element = null;
-                for (Object item : collection) {
-                    if (i == index) {
-                        element = item;
-                        break;
-                    }
-                    i++;
-                }
-                if (element == null) {
-                    throw new IndexOutOfBoundsException("Index " + index + " out of bounds");
-                }
-            }
-
-            // Extract remaining path after "[0]"
-            Optional<String> remainingPath = extractRemainingPath(propertyPath);
-
-            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
-                // Recursively resolve - handles any type (Map, List, Array, POJO)
-                return getResolvedObject(element, objectId, remainingPath.get());
-            }
-
-            // Just "[0]", no more path
-            return element;
-
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Collections require numeric index, got: " + propertyPath);
-        }
-    }
-
-    private Object handleArrayAccess(Object array, String propertyPath, String objectId) {
-        Matcher matcher = INDEX_PATTERN.matcher(propertyPath);
-
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("Collections require index notation, got: " + propertyPath);
-        }
-
-        try {
-            int index = Integer.parseInt(matcher.group(1));
-            Object element = Array.get(array, index);
-
-            // Extract remaining path after "[0]"
-            Optional<String> remainingPath = extractRemainingPath(propertyPath);
-
-            if (remainingPath.isPresent() && !remainingPath.get().isEmpty()) {
-                // Recursively resolve - handles any type (Map, List, Array, POJO)
-                return getResolvedObject(element, objectId, remainingPath.get());
-            }
-
-            return element;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Arrays require numeric index, got: " + propertyPath);
-        } catch (ArrayIndexOutOfBoundsException e) {
-            throw new IllegalArgumentException("Array index out of bounds: " + propertyPath);
-        }
-    }
-
-    private Optional<String> extractRemainingPath(String propertyPath) {
-        // propertyPath examples:
-        // "[0]" → return null or ""
-        // "[0].id" → return "id"
-        // "[0].users[1].name" → return "users[1].name"
-
-        int closeBracket = propertyPath.indexOf(']');
-
-        if (closeBracket == -1) {
-            return Optional.empty();  // No bracket found
-        }
-
-        if (closeBracket >= propertyPath.length() - 1) {
-            return Optional.empty();  // Nothing after the bracket
-        }
-
-        String remaining = propertyPath.substring(closeBracket + 1);
-
-        // Remove leading dot if present
-        if (remaining.startsWith(".")) {
-            remaining = remaining.substring(1);
-        }
-
-        return Optional.of(remaining);
+        JsonNode root = body instanceof JsonNode json ? json : mapper.valueToTree(body);
+        return path.navigate(root);
     }
 }

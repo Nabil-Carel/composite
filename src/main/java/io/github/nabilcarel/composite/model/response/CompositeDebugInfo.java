@@ -1,5 +1,6 @@
 package io.github.nabilcarel.composite.model.response;
 
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import java.util.Map;
 import java.util.Set;
 import lombok.*;
@@ -22,6 +23,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonNaming
 public class CompositeDebugInfo {
 
     /**
@@ -51,6 +53,7 @@ public class CompositeDebugInfo {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
+    @JsonNaming
     public static class SubRequestDebugInfo {
 
         /** The URL as declared in the original {@link io.github.nabilcarel.composite.model.request.SubRequestDto}. */

@@ -10,7 +10,7 @@
  * </ul>
  *
  * <p>Disable the built-in controller by setting
- * {@code composite.controller-enabled=false} and provide your own.
+ * {@code composite.controller.enabled=false} and provide your own.
  *
  * @see io.github.nabilcarel.composite.controller.CompositeController
  */

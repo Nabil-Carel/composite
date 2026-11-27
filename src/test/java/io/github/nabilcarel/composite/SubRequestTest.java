@@ -36,6 +36,25 @@ class SubRequestTest {
     }
 
     @Test
+    void getDependencies_withManyUnclosedPlaceholders_staysFast() {
+        // Quadratic with the old pattern: every "${" scanned to the end of the text.
+        String url = "/api/" + "${|".repeat(100_000) + "${user.id}";
+        SubRequest request = createSubRequest(url, "GET");
+
+        Set<String> deps = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+            java.time.Duration.ofSeconds(2), request::getDependencies);
+
+        assertThat(deps).containsExactly("user");
+    }
+
+    @Test
+    void getDependencies_withNestedPlaceholder_usesTheInnerReference() {
+        SubRequest request = createSubRequest("/api/${${user.id}.name}", "GET");
+
+        assertThat(request.getDependencies()).containsExactly("user");
+    }
+
+    @Test
     void getDependencies_withNoPlaceholders_returnsEmpty() {
         SubRequest request = createSubRequest("/api/users/123", "GET");
 

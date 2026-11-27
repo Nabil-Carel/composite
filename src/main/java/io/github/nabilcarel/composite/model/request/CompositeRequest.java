@@ -1,5 +1,7 @@
 package io.github.nabilcarel.composite.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import java.util.List;
@@ -43,6 +45,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonNaming
 public class CompositeRequest {
 
     /**
@@ -55,12 +58,20 @@ public class CompositeRequest {
     private List<@Valid SubRequestDto> subRequests;
 
     /**
-     * When {@code true}, any sub-request failure causes the entire composite request to be
-     * treated as failed.
+     * When {@code true}, the first non-2xx sub-response stops the rest of the batch.
      *
-     * <p>Defaults to {@code false}, meaning partial success is allowed: completed
-     * sub-requests are still returned alongside error entries for failed ones.
+     * <p>Sub-requests that never started receive {@code 424}. In-flight calls are cancelled
+     * and receive {@code 503}, because their handlers may have already run. This is not a
+     * transaction: completed work is not rolled back. Defaults to {@code false}.
      */
-    @Builder.Default
-    private boolean allOrNone = false;
+    private boolean stopOnFailure;
+
+    /**
+     * Rejects unknown fields regardless of the host application's Jackson settings, so a
+     * misspelled or unsupported option cannot be silently ignored.
+     */
+    @JsonAnySetter
+    void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unknown composite request field: " + name + ". Remove it or check its spelling.");
+    }
 }

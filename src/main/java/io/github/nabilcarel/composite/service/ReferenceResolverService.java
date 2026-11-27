@@ -1,32 +1,30 @@
 package io.github.nabilcarel.composite.service;
 
 import io.github.nabilcarel.composite.model.request.SubRequest;
+import io.github.nabilcarel.composite.model.response.SubResponse;
+import java.util.Map;
 
 /**
  * Resolves {@code ${referenceId.propertyPath}} placeholder expressions within a
  * {@link SubRequest}'s URL, headers, and body by looking up completed sub-responses
- * from the shared response store.
+ * of the same batch.
  *
  * <p>Placeholder syntax supports:
  * <ul>
  *   <li><strong>Dot notation</strong>: {@code ${user.address.city}} — navigates nested
- *       object fields using Spring's {@link org.springframework.beans.BeanWrapperImpl
- *       BeanWrapper}.</li>
- *   <li><strong>Bracket index notation</strong>: {@code ${items[0].name}} — accesses an
- *       element by numeric index in arrays, {@link java.util.List Lists}, and other
- *       {@link java.util.Collection Collections}.</li>
+ *       JSON fields by the names a client sees.</li>
+ *   <li><strong>Bracket index notation</strong>: {@code ${items[0].name}} — accesses a JSON
+ *       array element by numeric index.</li>
  *   <li><strong>Bracket key notation</strong>: {@code ${config['db.host']}} — accesses a
- *       {@link java.util.Map Map} entry whose key contains characters that would otherwise
- *       be treated as path separators.</li>
- *   <li><strong>Nested placeholders</strong>: {@code ${${ref}.id}} — resolved iteratively
- *       up to
- *       up to {@code composite.max-resolution-iterations} passes.</li>
+ *       JSON field whose name contains characters that would otherwise be treated as path
+ *       separators.</li>
+ *   <li><strong>Nested placeholders are rejected</strong>: {@code ${${ref}.id}} is invalid
+ *       because values are substituted exactly once.</li>
  * </ul>
  *
- * <p>When a placeholder refers to a value that is the sole content of a body field, the
- * original Java type of the resolved value is preserved (e.g. {@link Integer} or
- * {@link java.util.List}). When placeholders are embedded in a larger string they are
- * always coerced to their {@link Object#toString()} representation.
+ * <p>When a placeholder is the sole content of a body field, the referenced value keeps its
+ * JSON type. A placeholder in a URL, a header or larger text must refer to a string, number
+ * or boolean.
  *
  * @see ReferenceResolverServiceImpl
  * @see io.github.nabilcarel.composite.util.Patterns
@@ -40,13 +38,12 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose URL is to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request, used to look up completed
-     *                   sub-responses; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @return the fully resolved and URI-encoded URL string
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    String resolveUrl(SubRequest subRequest, String batchId);
+    String resolveUrl(SubRequest subRequest, Map<String, SubResponse> responses);
 
     /**
      * Resolves all {@code ${...}} placeholder expressions in the sub-request body,
@@ -61,11 +58,11 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose body is to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    void resolveBody(SubRequest subRequest, String batchId);
+    void resolveBody(SubRequest subRequest, Map<String, SubResponse> responses);
 
     /**
      * Resolves all {@code ${...}} placeholder expressions in the sub-request headers and
@@ -76,9 +73,9 @@ public interface ReferenceResolverService {
      *
      * @param subRequest the sub-request whose headers are to be resolved; must not be
      *                   {@code null}
-     * @param batchId    the UUID of the parent composite request; must not be {@code null}
+     * @param responses  completed sub-responses of the batch; must not be {@code null}
      * @throws io.github.nabilcarel.composite.exception.ReferenceResolutionException if a
      *         referenced response or property cannot be found
      */
-    void resolveHeaders(SubRequest subRequest, String batchId);
+    void resolveHeaders(SubRequest subRequest, Map<String, SubResponse> responses);
 }
