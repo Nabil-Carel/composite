@@ -4,15 +4,16 @@ import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
 import io.github.nabilcarel.composite.config.CompositeProperties;
 import io.github.nabilcarel.composite.dispatch.SubRequestDispatcher;
 import io.github.nabilcarel.composite.internal.LoopbackAddress;
+import io.github.nabilcarel.composite.internal.LoopbackTrust;
 import io.github.nabilcarel.composite.internal.WebClientSubRequestDispatcher;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import java.net.URI;
 import java.util.Map;
 import java.util.function.Supplier;
 import javax.net.ssl.SSLException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -28,6 +29,7 @@ import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriBuilderFactory;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
+import reactor.netty.resources.LoopResources;
 
 /**
  * Sends sub-requests with Reactor Netty's {@link WebClient}.
@@ -66,34 +68,52 @@ class WebClientLoopbackConfiguration {
     }
 
     /**
+     * Provides event loops used only by loopback calls, shut down when the context closes.
+     *
+     * <p>Reactor Netty's global loops are shut down by any Spring context that closes, through
+     * {@code ReactorResourceFactory}. Loopback calls would then fail in every other context
+     * still running in the same JVM, such as a parent or sibling context, or a cached test
+     * context.
+     *
+     * @return the loopback event loops
+     */
+    @Bean(destroyMethod = "dispose")
+    @Lazy
+    LoopResources compositeLoopResources() {
+        return LoopResources.create("composite-loopback", LoopResources.DEFAULT_IO_WORKER_COUNT, true);
+    }
+
+    /**
      * Provides the loopback {@link WebClient}. Declare a bean named {@code compositeWebClient}
      * to replace it.
      *
      * @param loopbackProperties loopback configuration (protocol, timeouts, SSL)
      * @param address the application's base URL
      * @param connectionProvider the loopback connection pool
-     * @param environment the environment
+     * @param loopResources the loopback event loops
+     * @param loopbackTrust the pinned server certificate, absent for plain HTTP
      * @return a client targeting the application's local URL
      */
     @Bean("compositeWebClient")
     @Lazy
     @ConditionalOnMissingBean(name = "compositeWebClient")
     WebClient loopbackWebClient(CompositeLoopbackProperties loopbackProperties, LoopbackAddress address,
-                                @Lazy ConnectionProvider connectionProvider, Environment environment) {
+                                @Lazy ConnectionProvider connectionProvider, @Lazy LoopResources loopResources,
+                                ObjectProvider<LoopbackTrust> loopbackTrust) {
         int maxResponseSize = LoopbackSupport.toBufferLimit(loopbackProperties.getMaxResponseSize());
 
         HttpClient httpClient = HttpClient.create(connectionProvider)
+                .runOn(loopResources)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) loopbackProperties.getConnectTimeout().toMillis());
 
         if (loopbackProperties.getResponseTimeout() != null) {
             httpClient = httpClient.responseTimeout(loopbackProperties.getResponseTimeout());
         }
 
-        if (LoopbackSupport.isHttps(loopbackProperties)) {
-            LoopbackSupport.logHttpsSetup(environment, loopbackProperties);
-            if (loopbackProperties.isTrustSelfSignedCertificates()) {
-                httpClient = trustAllCertificates(httpClient);
-            }
+        // A null bean, for plain HTTP, reads as absent and leaves the JVM defaults in place.
+        LoopbackTrust trust = loopbackTrust.getIfAvailable();
+        if (trust != null) {
+            httpClient = pinned(httpClient, trust);
         }
 
         return WebClient.builder()
@@ -117,14 +137,12 @@ class WebClientLoopbackConfiguration {
         return new WebClientSubRequestDispatcher(webClient);
     }
 
-    private static HttpClient trustAllCertificates(HttpClient httpClient) {
+    private static HttpClient pinned(HttpClient httpClient, LoopbackTrust trust) {
         try {
-            SslContext sslContext = SslContextBuilder.forClient()
-                    .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                    .build();
+            SslContext sslContext = SslContextBuilder.forClient().trustManager(trust).build();
             return httpClient.secure(spec -> spec.sslContext(sslContext));
         } catch (SSLException e) {
-            throw new IllegalStateException("Failed to configure SSL context for self-signed certificates", e);
+            throw new IllegalStateException("Failed to configure TLS for loopback calls", e);
         }
     }
 
