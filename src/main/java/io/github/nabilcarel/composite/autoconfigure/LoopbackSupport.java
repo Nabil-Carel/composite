@@ -1,17 +1,22 @@
 package io.github.nabilcarel.composite.autoconfigure;
 
 import io.github.nabilcarel.composite.config.CompositeLoopbackProperties;
-import java.net.Socket;
-import java.security.GeneralSecurityException;
+import io.github.nabilcarel.composite.internal.LoopbackTrust;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.cert.X509Certificate;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509ExtendedTrustManager;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.thread.Threading;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.ssl.SslBundle;
+import org.springframework.boot.ssl.SslBundles;
+import org.springframework.boot.web.server.Ssl;
+import org.springframework.boot.web.server.WebServerSslBundle;
 import org.springframework.core.env.Environment;
+import org.springframework.util.StringUtils;
 import org.springframework.util.unit.DataSize;
 
 /** Loopback settings shared by both HTTP clients and the handler limit. */
@@ -70,113 +75,115 @@ final class LoopbackSupport {
         return (int) maxResponseSize.toBytes();
     }
 
-    /**
-     * Builds a TLS context that accepts any certificate and skips host name checks.
-     *
-     * <p><strong>Insecure, for development and tests only.</strong> Used only when
-     * {@code composite.loopback.trust-self-signed-certificates=true}, which is disabled by
-     * default, and only for HTTPS loopback calls to this application's own server. Anything
-     * able to intercept local traffic could then read or change those calls, including the
-     * forwarded credentials. {@link #warnIfTrustingAllCertificates} logs a warning at startup
-     * whenever the option is on. In production, add the server certificate to the JVM
-     * truststore instead.
-     */
-    static SSLContext trustAllSslContext() {
-        // Deliberately accepts every certificate. See the warning above.
-        X509ExtendedTrustManager trustAll = new X509ExtendedTrustManager() {
-            @Override
-            public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {
-            }
-
-            @Override
-            public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {
-            }
-
-            @Override
-            public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
-            }
-
-            @Override
-            public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
-            }
-
-            @Override
-            public void checkClientTrusted(X509Certificate[] chain, String authType) {
-            }
-
-            @Override
-            public void checkServerTrusted(X509Certificate[] chain, String authType) {
-            }
-
-            @Override
-            public X509Certificate[] getAcceptedIssuers() {
-                return new X509Certificate[0];
-            }
-        };
-
-        try {
-            SSLContext context = SSLContext.getInstance("TLS");
-            context.init(null, new TrustManager[] {trustAll}, null);
-            return context;
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("Failed to configure SSL context for self-signed certificates", e);
-        }
-    }
-
     static boolean isHttps(CompositeLoopbackProperties loopbackProperties) {
         return "https".equalsIgnoreCase(loopbackProperties.getProtocol());
     }
 
-    /** Explains HTTPS settings that will likely fail or weaken security. */
-    static void logHttpsSetup(Environment environment, CompositeLoopbackProperties loopbackProperties) {
-        if (!environment.getProperty("server.ssl.enabled", Boolean.class, false)) {
-            log.warn("""
-                    Composite loopback configured for HTTPS but server SSL is not enabled.
-                    Either:
-                      - Set server.ssl.enabled=true with a valid keystore
-                      - Or change composite.loopback.protocol=http for unencrypted loopback
-                    Attempting to proceed, but connections will likely fail.""");
+    /**
+     * Pins HTTPS loopback calls to the certificate of the application's own server.
+     *
+     * <p>The certificate comes from the bundle named by {@code composite.loopback.ssl-bundle}
+     * when set, otherwise from the server's own {@code server.ssl} settings. When the server's
+     * bundle is reloaded, the pin follows it.
+     *
+     * @param loopbackProperties loopback settings
+     * @param serverSsl the server's SSL settings, or {@code null} when unavailable
+     * @param bundles the application's SSL bundles, or {@code null} when unavailable
+     * @return the trust manager, or {@code null} for plain HTTP, or when the server's certificate
+     *     cannot be found, in which case the JVM truststore applies
+     * @throws IllegalStateException if the configured bundle holds no usable certificate
+     */
+    static LoopbackTrust loopbackTrust(CompositeLoopbackProperties loopbackProperties, Ssl serverSsl,
+                                       SslBundles bundles) {
+        if (!isHttps(loopbackProperties)) {
+            return null;
         }
 
-        // Trusting every certificate is warned about at startup by warnIfTrustingAllCertificates.
-        if (!loopbackProperties.isTrustSelfSignedCertificates()) {
-            log.info("""
-                    Composite loopback using HTTPS with default truststore.
-                    If using self-signed certificates, either:
-                      - Import your certificate into the JVM truststore (recommended for production)
-                      - Or set composite.loopback.trust-self-signed-certificates=true (dev/test only)""");
+        String bundleName = loopbackProperties.getSslBundle();
+        if (StringUtils.hasText(bundleName)) {
+            if (bundles == null) {
+                throw new IllegalStateException(
+                        "composite.loopback.ssl-bundle is set, but the application has no SSL bundles");
+            }
+            String source = "SSL bundle '" + bundleName + "'";
+            LoopbackTrust trust = new LoopbackTrust(certificates(bundles.getBundle(bundleName), true, source));
+            bundles.addBundleUpdateHandler(bundleName, bundle -> trust.update(certificates(bundle, true, source)));
+            return trust;
         }
+
+        if (!Ssl.isEnabled(serverSsl)) {
+            log.warn("""
+                    composite.loopback.protocol is https, but server.ssl is not configured, so loopback \
+                    calls fall back to the JVM truststore. Configure server.ssl, name a bundle holding \
+                    the server certificate with composite.loopback.ssl-bundle, or set \
+                    composite.loopback.protocol=http.""");
+            return null;
+        }
+
+        LoopbackTrust trust = new LoopbackTrust(
+                certificates(WebServerSslBundle.get(serverSsl, bundles), false, "server.ssl"));
+        if (StringUtils.hasText(serverSsl.getBundle()) && bundles != null) {
+            bundles.addBundleUpdateHandler(serverSsl.getBundle(),
+                    bundle -> trust.update(certificates(bundle, false, "server.ssl")));
+        }
+        return trust;
     }
 
     /**
-     * Logs a warning when {@code composite.loopback.trust-self-signed-certificates} is on. Runs
-     * at startup because the HTTP clients are created on the first batch.
-     *
-     * @param environment the application environment
-     * @return whether the option is on
+     * Collects the certificates to pin. A bundle named for loopback calls may list them in its
+     * trust store. The server's own trust store is never used, because it holds the
+     * authorities for client certificates rather than the server's identity.
      */
-    static boolean warnIfTrustingAllCertificates(Environment environment) {
-        Binder binder = Binder.get(environment);
-        boolean trustAll = binder.bind("composite.loopback.trust-self-signed-certificates", Boolean.class)
-                .orElse(false);
-        if (!trustAll) {
-            return false;
+    private static List<X509Certificate> certificates(SslBundle bundle, boolean useTrustStore, String source) {
+        List<X509Certificate> certificates = new ArrayList<>();
+        try {
+            KeyStore trustStore = bundle.getStores().getTrustStore();
+            if (useTrustStore && trustStore != null) {
+                for (String alias : Collections.list(trustStore.aliases())) {
+                    if (trustStore.isCertificateEntry(alias)
+                            && trustStore.getCertificate(alias) instanceof X509Certificate certificate) {
+                        certificates.add(certificate);
+                    }
+                }
+            }
+
+            KeyStore keyStore = bundle.getStores().getKeyStore();
+            String keyAlias = bundle.getKey() != null ? bundle.getKey().getAlias() : null;
+            if (certificates.isEmpty() && keyStore != null) {
+                for (String alias : Collections.list(keyStore.aliases())) {
+                    if ((keyAlias == null || keyAlias.equals(alias)) && keyStore.isKeyEntry(alias)
+                            && keyStore.getCertificate(alias) instanceof X509Certificate certificate) {
+                        certificates.add(certificate);
+                    }
+                }
+            }
+        } catch (KeyStoreException e) {
+            throw new IllegalStateException("Could not read the certificates in " + source, e);
         }
 
-        boolean https = "https".equalsIgnoreCase(
-                binder.bind("composite.loopback.protocol", String.class).orElse("http"));
-        if (https) {
-            log.warn("""
-                    composite.loopback.trust-self-signed-certificates is enabled: loopback calls accept \
-                    any certificate and skip host name checks. This is insecure and meant for development \
-                    and tests only. In production, add the server certificate to the JVM truststore and \
-                    remove this setting.""");
-        } else {
-            log.warn("""
-                    composite.loopback.trust-self-signed-certificates is enabled but has no effect, because \
-                    composite.loopback.protocol is not https. Remove the setting. It is meant for \
-                    development and tests only.""");
+        if (certificates.isEmpty()) {
+            throw new IllegalStateException(source + " contains no certificate for loopback calls to trust");
         }
-        return true;
+        return certificates;
+    }
+
+    /**
+     * Logs a warning when the deprecated {@code composite.loopback.trust-self-signed-certificates}
+     * is set. Runs at startup because the HTTP clients are created on the first batch.
+     *
+     * @param environment the application environment
+     * @return whether the option is set to {@code true}
+     */
+    static boolean warnIfDeprecatedTrustOption(Environment environment) {
+        boolean enabled = Binder.get(environment)
+                .bind("composite.loopback.trust-self-signed-certificates", Boolean.class)
+                .orElse(false);
+        if (enabled) {
+            log.warn("""
+                    composite.loopback.trust-self-signed-certificates is deprecated and has no effect. \
+                    HTTPS loopback calls now trust only the server's own certificate, self-signed or not. \
+                    Remove the setting.""");
+        }
+        return enabled;
     }
 }

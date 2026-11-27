@@ -72,6 +72,12 @@ public class TestAdversarialController {
         return Map.of("id", id);
     }
 
+    @CompositeEndpoint
+    @GetMapping("/numbered/{id:\\d+}")
+    public Map<String, Object> numbered(@PathVariable("id") long id) {
+        return Map.of("id", id);
+    }
+
     @GetMapping("/items/hidden")
     public Map<String, Object> hiddenItem() {
         HIDDEN_CALLS.incrementAndGet();

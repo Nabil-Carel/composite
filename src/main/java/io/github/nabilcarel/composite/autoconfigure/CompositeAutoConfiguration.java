@@ -13,6 +13,7 @@ import io.github.nabilcarel.composite.internal.CompositeRequestSizeAdvice;
 import io.github.nabilcarel.composite.internal.DispatchMarker;
 import io.github.nabilcarel.composite.internal.JdkHttpSubRequestDispatcher;
 import io.github.nabilcarel.composite.internal.LoopbackAddress;
+import io.github.nabilcarel.composite.internal.LoopbackTrust;
 import io.github.nabilcarel.composite.service.*;
 import jakarta.validation.Validator;
 import java.util.List;
@@ -24,8 +25,11 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.task.VirtualThreadTaskExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.ssl.SslBundles;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
@@ -243,12 +247,32 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
+     * Pins HTTPS loopback calls to the server's own certificate. Created at startup, so a
+     * missing or empty bundle fails there rather than on the first batch.
+     *
+     * @param loopbackProperties loopback configuration
+     * @param serverProperties the server settings, when available
+     * @param sslBundles the application's SSL bundles, when available
+     * @return the trust manager, or {@code null} for plain HTTP or when the server's certificate
+     *     cannot be found, which leaves the JVM truststore in charge
+     */
+    @Bean
+    public LoopbackTrust compositeLoopbackTrust(CompositeLoopbackProperties loopbackProperties,
+                                                ObjectProvider<ServerProperties> serverProperties,
+                                                ObjectProvider<SslBundles> sslBundles) {
+        ServerProperties server = serverProperties.getIfAvailable();
+        return LoopbackSupport.loopbackTrust(loopbackProperties, server != null ? server.getSsl() : null,
+                sslBundles.getIfAvailable());
+    }
+
+    /**
      * Sends sub-requests with the non-blocking JDK HTTP client, the default
      * {@code composite.loopback.client}.
      *
-     * @param loopbackProperties loopback configuration (protocol, timeouts, SSL, limits)
+     * @param loopbackProperties loopback configuration (protocol, timeouts, limits)
      * @param address the application's base URL
      * @param objectMapper serialises request bodies
+     * @param loopbackTrust the pinned server certificate, absent for plain HTTP
      * @return the default dispatcher
      */
     @Bean
@@ -258,16 +282,12 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     public SubRequestDispatcher compositeSubRequestDispatcher(
             CompositeLoopbackProperties loopbackProperties,
             LoopbackAddress address,
-            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper) {
+            @Qualifier("compositeObjectMapper") ObjectMapper objectMapper,
+            ObjectProvider<LoopbackTrust> loopbackTrust) {
         int maxResponseSize = LoopbackSupport.toBufferLimit(loopbackProperties.getMaxResponseSize());
-        SSLContext sslContext = null;
-
-        if (LoopbackSupport.isHttps(loopbackProperties)) {
-            LoopbackSupport.logHttpsSetup(environment, loopbackProperties);
-            if (loopbackProperties.isTrustSelfSignedCertificates()) {
-                sslContext = LoopbackSupport.trustAllSslContext();
-            }
-        }
+        // A null bean, for plain HTTP, reads as absent and leaves the JVM defaults in place.
+        LoopbackTrust trust = loopbackTrust.getIfAvailable();
+        SSLContext sslContext = trust != null ? trust.sslContext() : null;
 
         return new JdkHttpSubRequestDispatcher(address::baseUrl, objectMapper, loopbackExecutor(),
                 loopbackProperties.getConnectTimeout(), loopbackProperties.getResponseTimeout(), maxResponseSize,
@@ -322,7 +342,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Logs the port and warns when debug mode or trusting every loopback certificate is enabled.
+     * Logs the port and warns when debug mode or the deprecated trust option is enabled.
      *
      * {@inheritDoc}
      */
@@ -336,7 +356,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         if (properties.isDebugEnabled()) {
             log.warn("Composite debug mode is enabled. Disable in production.");
         }
-        LoopbackSupport.warnIfTrustingAllCertificates(environment);
+        LoopbackSupport.warnIfDeprecatedTrustOption(environment);
     }
 
     /**

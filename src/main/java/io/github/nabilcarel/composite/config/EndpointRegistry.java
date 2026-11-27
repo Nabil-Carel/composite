@@ -17,6 +17,7 @@ import org.springframework.web.servlet.mvc.condition.PathPatternsRequestConditio
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 /**
  * Discovers and maintains an allowlist of Spring MVC handlers that are eligible for
@@ -57,6 +58,10 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     private void discoverEndpoints() {
         Map<String, List<Route>> routes = new HashMap<>();
         Set<EndpointInfo> endpoints = new LinkedHashSet<>();
+        PathPatternParser parser = handlerMapping.getPatternParser() != null
+                ? handlerMapping.getPatternParser()
+                : PathPatternParser.defaultInstance;
+        List<String> antMatched = new ArrayList<>();
 
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMapping.getHandlerMethods().entrySet()) {
             RequestMappingInfo mapping = entry.getKey();
@@ -65,13 +70,13 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
 
             if (pathCondition == null) {
                 if (annotation != null) {
-                    log.warn("Composite endpoint {} ignored: only PathPattern matching is supported",
-                            entry.getValue());
+                    antMatched.add(entry.getValue().toString());
                 }
                 continue;
             }
 
             for (PathPattern pattern : pathCondition.getPatterns()) {
+                PathPattern relaxed = parser.parse(withoutConstraints(pattern.getPatternString()));
                 for (String method : methodsOf(mapping)) {
                     EndpointInfo info = null;
 
@@ -84,9 +89,18 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
                         log.info("Registered composite endpoint: {} {}", method, pattern.getPatternString());
                     }
 
-                    routes.computeIfAbsent(method, key -> new ArrayList<>()).add(new Route(pattern, info));
+                    routes.computeIfAbsent(method, key -> new ArrayList<>()).add(new Route(pattern, relaxed, info));
                 }
             }
+        }
+
+        // Starting anyway would reject every sub-request, which looks like a routing bug.
+        if (!antMatched.isEmpty()) {
+            throw new IllegalStateException("""
+                    Composite endpoints need Spring MVC path patterns, but this application matches \
+                    paths with AntPathMatcher, usually because of \
+                    spring.mvc.pathmatch.matching-strategy=ant_path_matcher. Remove that setting or set \
+                    it to path_pattern_parser. Affected handlers: %s""".formatted(String.join(", ", antMatched)));
         }
 
         routesByMethod = Map.copyOf(routes);
@@ -104,6 +118,10 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
     /**
      * Finds the annotated endpoint a sub-request would be routed to.
      *
+     * <p>A URL template is checked before its references have values, so each reference stands
+     * in as a placeholder segment and regex constraints such as {@code {id:\d+}} are ignored for
+     * it. The rendered URL is checked again with the full patterns before it is sent.
+     *
      * @param method the HTTP method, in any case
      * @param url a URL template or rendered URL; the query string is ignored
      * @return the endpoint, or empty if the URL is unsafe or routes to an unannotated handler
@@ -118,22 +136,24 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
             return Optional.empty();
         }
 
+        boolean template = url.contains("${");
         PathContainer container = PathContainer.parsePath(path.get());
         PathPattern mostSpecific = null;
         EndpointInfo selected = null;
         boolean unannotated = false;
 
         for (Route route : routesByMethod.getOrDefault(method.toUpperCase(Locale.ROOT), List.of())) {
-            if (!route.pattern().matches(container)) {
+            PathPattern pattern = template ? route.relaxed() : route.pattern();
+            if (!pattern.matches(container)) {
                 continue;
             }
 
             int comparison = mostSpecific == null
                     ? -1
-                    : PathPattern.SPECIFICITY_COMPARATOR.compare(route.pattern(), mostSpecific);
+                    : PathPattern.SPECIFICITY_COMPARATOR.compare(pattern, mostSpecific);
 
             if (comparison < 0) {
-                mostSpecific = route.pattern();
+                mostSpecific = pattern;
                 selected = route.endpoint();
                 unannotated = route.endpoint() == null;
             } else if (comparison == 0) {
@@ -144,12 +164,63 @@ public class EndpointRegistry implements ApplicationListener<ApplicationReadyEve
         return mostSpecific == null || unannotated ? Optional.empty() : Optional.of(selected);
     }
 
+    /**
+     * Removes regex constraints from URI variables: {@code /orders/{id:\d+}} becomes
+     * {@code /orders/{id}}. Braces inside a constraint, as in {@code {code:[a-z]{3}}}, are
+     * balanced so the variable ends at its own closing brace.
+     */
+    static String withoutConstraints(String pattern) {
+        StringBuilder result = new StringBuilder(pattern.length());
+        int i = 0;
+        while (i < pattern.length()) {
+            char c = pattern.charAt(i);
+            if (c != '{') {
+                result.append(c);
+                i++;
+                continue;
+            }
+
+            int depth = 1;
+            int colon = -1;
+            int end = i + 1;
+            while (end < pattern.length() && depth > 0) {
+                char inner = pattern.charAt(end);
+                if (inner == '\\') {
+                    end += 2;
+                    continue;
+                }
+                if (inner == '{') {
+                    depth++;
+                } else if (inner == '}') {
+                    depth--;
+                } else if (inner == ':' && depth == 1 && colon < 0) {
+                    colon = end;
+                }
+                if (depth > 0) {
+                    end++;
+                }
+            }
+
+            if (depth > 0) {
+                // Unbalanced: leave the rest unchanged and let the parser report it.
+                result.append(pattern, i, pattern.length());
+                break;
+            }
+            result.append(pattern, i, colon < 0 ? end : colon).append('}');
+            i = end + 1;
+        }
+        return result.toString();
+    }
+
     public Set<EndpointInfo> getAvailableEndpoints() {
         return new HashSet<>(availableEndpoints);
     }
 
-    /** A mapped path and its allowlist entry, which is {@code null} for unannotated handlers. */
-    private record Route(PathPattern pattern, EndpointInfo endpoint) {
+    /**
+     * A mapped path, the same path without regex constraints, and its allowlist entry, which
+     * is {@code null} for unannotated handlers.
+     */
+    private record Route(PathPattern pattern, PathPattern relaxed, EndpointInfo endpoint) {
     }
 
     /**
