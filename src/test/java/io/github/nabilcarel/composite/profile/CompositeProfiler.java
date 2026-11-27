@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,6 +58,8 @@ public final class CompositeProfiler {
     private static final boolean VIRTUAL_THREADS = Boolean.getBoolean("composite.profile.virtualThreads");
     private static final String DISPATCHER = System.getProperty("composite.profile.dispatcher", "jdk");
     private static final long HANDLER_DELAY_MILLIS = Long.getLong("composite.profile.handlerDelayMillis", 0);
+    private static final Duration CLIENT_TIMEOUT =
+        Duration.ofSeconds(Long.getLong("composite.profile.clientTimeoutSeconds", 30));
     private static final String MAX_CONNECTIONS = System.getProperty("composite.profile.maxConnections", "100");
 
     private record Result(int size, Load load, double allocatedKbPerBatch, long gcCount, double gcPauseMillis,
@@ -73,6 +76,7 @@ public final class CompositeProfiler {
         private final Process process;
         private final BufferedWriter commands;
         private final BlockingQueue<String> replies = new LinkedBlockingQueue<>();
+        private final java.util.concurrent.atomic.AtomicBoolean dumped = new java.util.concurrent.atomic.AtomicBoolean();
         private final int port;
 
         private ServerProcess(Path serverLog) throws IOException {
@@ -140,6 +144,28 @@ public final class CompositeProfiler {
             reply("STARTED");
         }
 
+        /** Writes every server thread, virtual threads included, the first time a request times out. */
+        private void dumpThreadsOnce(Path file) {
+            if (!dumped.compareAndSet(false, true)) {
+                return;
+            }
+            String jcmd = Path.of(System.getProperty("java.home"), "bin", "jcmd").toString();
+            try {
+                Files.deleteIfExists(file);
+                Process dump = new ProcessBuilder(jcmd, String.valueOf(process.pid()), "Thread.dump_to_file",
+                    "-format=text", file.toAbsolutePath().toString())
+                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+                dump.waitFor(30, TimeUnit.SECONDS);
+                System.err.println("A request timed out. Server threads written to " + file);
+            } catch (IOException e) {
+                System.err.println("A request timed out, and the server threads could not be dumped: " + e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
         private long stopRecording() throws IOException {
             send("STOP");
             return Long.parseLong(reply("ALLOCATED "));
@@ -169,13 +195,15 @@ public final class CompositeProfiler {
         try (ServerProcess server = new ServerProcess(output.resolve("server.log"))) {
             HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
 
+            Runnable onTimeout = () -> server.dumpThreadsOnce(output.resolve("server-threads.txt"));
+
             for (int size : BATCH_SIZES) {
                 HttpRequest request = request(server.port, size);
-                drive(client, request, concurrency, warmup);
+                drive(client, request, concurrency, warmup, onTimeout);
 
                 Path file = output.resolve("batch-" + size + ".jfr");
                 server.startRecording(file);
-                Load load = drive(client, request, concurrency, measure);
+                Load load = drive(client, request, concurrency, measure, onTimeout);
                 long allocated = server.stopRecording();
                 results.add(analyze(size, load, allocated, file));
             }
@@ -195,14 +223,14 @@ public final class CompositeProfiler {
         String body = "{\"subRequests\":[{\"referenceId\":\"root\",\"method\":\"GET\",\"url\":\"/profile/items/1"
             + delay + "\"}" + dependents + "]}";
         return HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/composite/execute"))
-            .timeout(Duration.ofSeconds(30))
+            .timeout(CLIENT_TIMEOUT)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
     }
 
-    private static Load drive(HttpClient client, HttpRequest request, int concurrency, Duration duration)
-            throws Exception {
+    private static Load drive(HttpClient client, HttpRequest request, int concurrency, Duration duration,
+                              Runnable onTimeout) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(concurrency, runnable -> {
             Thread thread = new Thread(runnable, "profile-client");
             thread.setDaemon(true);
@@ -219,7 +247,16 @@ public final class CompositeProfiler {
                 long errors = 0;
                 while (System.nanoTime() < deadline) {
                     long begin = System.nanoTime();
-                    HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                    HttpResponse<String> response;
+                    try {
+                        response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                    } catch (HttpTimeoutException e) {
+                        // Counted as an error, so the CI job still fails, and the server's threads
+                        // are captured while the batch is stuck.
+                        errors++;
+                        onTimeout.run();
+                        continue;
+                    }
                     if (count == latencies.length) {
                         latencies = Arrays.copyOf(latencies, count * 2);
                     }

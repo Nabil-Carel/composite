@@ -214,7 +214,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: profile-vt-${{ matrix.virtual-threads }}-${{ matrix.dispatcher }}
-          path: build/reports/jvm-profile/profile.md
+          # The server log and thread dump explain a request that timed out.
+          path: |
+            build/reports/jvm-profile/profile.md
+            build/reports/jvm-profile/server.log
+            build/reports/jvm-profile/server-threads.txt
           if-no-files-found: ignore
 
   package:
