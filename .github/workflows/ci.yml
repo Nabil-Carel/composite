@@ -28,7 +28,7 @@ concurrency:
 
 env:
   # setup-java exports these, and Gradle uses them to find the 17 and 21 toolchains. The retry
-  # settings ride out Maven Central rate limits (HTTP 429) with a longer backoff.
+  # settings cover transient network errors on project dependencies.
   TOOLCHAINS: >-
     -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64
     -Porg.gradle.java.installations.auto-download=false
@@ -42,7 +42,7 @@ jobs:
     # not send every matrix job to Maven Central at once and trip its rate limit.
     name: Dependencies · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -64,7 +64,17 @@ jobs:
           cache-read-only: false
 
       - name: Download dependencies
-        run: ./gradlew resolveAllDependencies --console=plain $TOOLCHAINS
+        # Gradle does not retry the plugin classpath when Maven Central answers 429 Too Many
+        # Requests, so retry the whole download after waiting for the limit to clear.
+        run: |
+          for wait in 60 120 180 0; do
+            ./gradlew resolveAllDependencies --console=plain $TOOLCHAINS && exit 0
+            if [ "$wait" -gt 0 ]; then
+              echo "Download failed, retrying in ${wait}s"
+              sleep "$wait"
+            fi
+          done
+          exit 1
 
   test:
     needs: dependencies
