@@ -98,6 +98,13 @@ final class LoopbackSupport {
             return null;
         }
 
+        if (serverSsl != null && serverSsl.getClientAuth() == Ssl.ClientAuth.NEED) {
+            log.warn("""
+                    server.ssl.client-auth is need, but loopback calls present no client certificate, \
+                    so every sub-request will fail. Use client-auth=want, or check client certificates \
+                    in a proxy in front of the application.""");
+        }
+
         String bundleName = loopbackProperties.getSslBundle();
         if (StringUtils.hasText(bundleName)) {
             if (bundles == null) {

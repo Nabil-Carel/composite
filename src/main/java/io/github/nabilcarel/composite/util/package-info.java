@@ -1,8 +1,10 @@
 /**
  * Shared utility classes for the Composite library.
  *
- * <p>Currently contains {@link io.github.nabilcarel.composite.util.Patterns}, a utility
- * class that provides compiled {@link java.util.regex.Pattern} constants used throughout
- * the library for placeholder detection, index extraction, and dependency parsing.
+ * <p>{@link io.github.nabilcarel.composite.util.ReferenceTemplate} and
+ * {@link io.github.nabilcarel.composite.util.ReferencePath} parse {@code ${...}} references,
+ * {@link io.github.nabilcarel.composite.util.SubRequestTarget} parses and renders sub-request
+ * URLs, and {@link io.github.nabilcarel.composite.util.SubRequestHeaderPolicy} decides which
+ * headers a client may set.
  */
 package io.github.nabilcarel.composite.util;

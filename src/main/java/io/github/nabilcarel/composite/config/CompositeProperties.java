@@ -143,6 +143,16 @@ public class CompositeProperties {
      */
     private boolean debugEnabled = false;
 
+    /**
+     * Names of sub-response headers returned to the client in each sub-response's
+     * {@code headers}.
+     *
+     * <p>Defaults to {@code Location} and {@code ETag}, so a client learns where a created
+     * resource lives. {@code Set-Cookie} is never returned, because that would hand
+     * {@code HttpOnly} cookies to scripts. Setting this property replaces the list.
+     */
+    private List<String> responseHeaders = new ArrayList<>(List.of("Location", "ETag"));
+
     /** Security-related configuration. */
     private Security security = new Security();
 
@@ -167,6 +177,15 @@ public class CompositeProperties {
          * Defaults to {@code true}.
          */
         private boolean enabled = true;
+
+        /**
+         * Whether {@code GET {basePath}/endpoints} lists the endpoints available to
+         * composite requests. When disabled, it answers {@code 404}.
+         *
+         * <p>The list describes every route a batch can reach, which helps during development
+         * but maps the attack surface for anyone who can call it. Defaults to {@code false}.
+         */
+        private boolean listEndpoints = false;
     }
 
     /**
@@ -246,5 +265,18 @@ public class CompositeProperties {
          * application-specific identity header like {@code X-User-Id}.
          */
         private List<String> blockedHeaders = new ArrayList<>();
+
+        /**
+         * Whether each sub-request describes the outer request with {@code X-Forwarded-For},
+         * {@code X-Forwarded-Proto}, {@code X-Forwarded-Host} and {@code X-Forwarded-Port}.
+         *
+         * <p>Every sub-request reaches the application from the loopback address. With
+         * {@code server.forward-headers-strategy} set to {@code native} or
+         * {@code framework}, these headers make the sub-request see the client's address,
+         * scheme and host, as the outer request did, so per-client rate limits, IP rules,
+         * audit logs and generated links keep working. Without that setting the headers are
+         * ignored. Defaults to {@code true}.
+         */
+        private boolean forwardClientAddress = true;
     }
 }

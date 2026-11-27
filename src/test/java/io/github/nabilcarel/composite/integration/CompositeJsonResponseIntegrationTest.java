@@ -134,6 +134,33 @@ class CompositeJsonResponseIntegrationTest {
         assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
     }
 
+    @Test
+    void listedResponseHeaders_areReturned_andCookiesNeverAre() throws Exception {
+        JsonNode response = execute(get("a", "/api/json/created"));
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(201);
+        assertThat(response.at("/responses/a/headers/Location").asText()).isEqualTo("/api/json/items/42");
+        assertThat(response.at("/responses/a/headers/ETag").asText()).isEqualTo("\"v1\"");
+        assertThat(response.at("/responses/a/headers").size()).isEqualTo(2);
+        assertThat(response.toString()).doesNotContain("secret").doesNotContain("hidden");
+    }
+
+    @Test
+    void jsonErrorBody_keepsItsStructure() throws Exception {
+        JsonNode response = execute(get("a", "/api/json/problem"));
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(422);
+        assertThat(response.at("/responses/a/body/detail").asText()).isEqualTo("Quantity must be positive");
+    }
+
+    @Test
+    void invalidJsonErrorBody_staysText() throws Exception {
+        JsonNode response = execute(get("a", "/api/json/broken-error"));
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(400);
+        assertThat(response.at("/responses/a/body").asText()).isEqualTo("{not json");
+    }
+
     private static String get(String referenceId, String url) {
         return "{\"referenceId\":\"" + referenceId + "\",\"method\":\"GET\",\"url\":\"" + url + "\"}";
     }

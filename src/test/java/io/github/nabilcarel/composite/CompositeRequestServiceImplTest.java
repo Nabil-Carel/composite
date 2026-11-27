@@ -477,6 +477,8 @@ class CompositeRequestServiceImplTest {
 
         when(clientResponse.statusCode()).thenReturn(HttpStatus.NO_CONTENT);
         when(clientResponse.bodyToMono(String.class)).thenReturn(Mono.empty());
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.empty());
 
         when(requestBodySpec.exchangeToMono(any())).thenAnswer(invocation -> {
             java.util.function.Function<ClientResponse, Mono<?>> handler = invocation.getArgument(0);
@@ -485,6 +487,8 @@ class CompositeRequestServiceImplTest {
     }
 
     private void setupErrorWebClientMock(int statusCode, String errorBody) {
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.empty());
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
@@ -499,6 +503,8 @@ class CompositeRequestServiceImplTest {
     }
 
     private void setupErrorWebClientMockWithEmptyBody(int statusCode) {
+        when(clientResponse.headers()).thenReturn(clientResponseHeaders);
+        when(clientResponseHeaders.contentType()).thenReturn(Optional.empty());
         when(webClient.method(any(HttpMethod.class))).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);

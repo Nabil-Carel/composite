@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.*;
 @TestPropertySource(properties = {
     "composite.base-path=/api/composite",
     "composite.controller.enabled=true",
+    "composite.controller.list-endpoints=true",
     "composite.header-injection.enabled=true",
     "composite.security.additional-auth-headers=X-Trace-Id,X-Span-Id"
 })

@@ -39,6 +39,18 @@ class LoopbackSupportTest {
     }
 
     @Test
+    void requiredClientCertificates_warnThatLoopbackCallsWillFail(CapturedOutput output) {
+        properties.setProtocol("https");
+        org.springframework.boot.web.server.Ssl ssl = new org.springframework.boot.web.server.Ssl();
+        ssl.setEnabled(false);
+        ssl.setClientAuth(org.springframework.boot.web.server.Ssl.ClientAuth.NEED);
+
+        LoopbackSupport.loopbackTrust(properties, ssl, null);
+
+        assertThat(output).contains("WARN").contains("server.ssl.client-auth is need");
+    }
+
+    @Test
     void namedBundleWithoutBundles_failsClearly() {
         properties.setProtocol("https");
         properties.setSslBundle("loopback");

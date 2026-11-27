@@ -90,4 +90,36 @@ public class TestJsonController {
         lastBody = body;
         return Map.of("ok", true);
     }
+
+    @CompositeEndpoint
+    @GetMapping("/created")
+    public ResponseEntity<Map<String, Object>> created() {
+        return ResponseEntity.created(java.net.URI.create("/api/json/items/42"))
+                .eTag("\"v1\"")
+                .header(org.springframework.http.HttpHeaders.SET_COOKIE, "session=secret; HttpOnly")
+                .header("X-Internal", "hidden")
+                .body(Map.of("id", "42"));
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/problem")
+    public ResponseEntity<org.springframework.http.ProblemDetail> problem() {
+        return ResponseEntity.unprocessableEntity()
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(org.springframework.http.ProblemDetail.forStatusAndDetail(
+                        org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "Quantity must be positive"));
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/broken-error")
+    public ResponseEntity<String> brokenError() {
+        return ResponseEntity.badRequest().contentType(MediaType.APPLICATION_JSON).body("{not json");
+    }
+
+    @CompositeEndpoint
+    @GetMapping("/client")
+    public Map<String, Object> client(jakarta.servlet.http.HttpServletRequest request) {
+        return Map.of("remoteAddr", request.getRemoteAddr(), "scheme", request.getScheme(),
+                "host", request.getServerName());
+    }
 }

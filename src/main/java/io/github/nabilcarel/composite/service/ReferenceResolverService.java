@@ -27,7 +27,7 @@ import java.util.Map;
  * or boolean.
  *
  * @see ReferenceResolverServiceImpl
- * @see io.github.nabilcarel.composite.util.Patterns
+ * @see io.github.nabilcarel.composite.util.ReferenceTemplate
  * @since 0.0.1
  */
 public interface ReferenceResolverService {

@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -91,7 +92,16 @@ class CompositeControllerTest {
     }
 
     @Test
+    void getAvailableEndpoints_isNotFoundByDefault() {
+        assertThatThrownBy(controller::getAvailableEndpoints)
+                .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        verifyNoInteractions(requestService);
+    }
+
+    @Test
     void getAvailableEndpoints_delegatesToRequestService() {
+        enableListing();
         EndpointRegistry.EndpointInfo info = EndpointRegistry.EndpointInfo.builder()
                 .pattern("/api/users").method("GET").build();
         when(requestService.getAvailableEndpoints()).thenReturn(Set.of(info));
@@ -104,10 +114,17 @@ class CompositeControllerTest {
 
     @Test
     void getAvailableEndpoints_withNoEndpoints_returnsEmptySet() {
+        enableListing();
         when(requestService.getAvailableEndpoints()).thenReturn(Set.of());
 
         Set<EndpointRegistry.EndpointInfo> result = controller.getAvailableEndpoints();
 
         assertThat(result).isEmpty();
+    }
+
+    private void enableListing() {
+        CompositeProperties properties = new CompositeProperties();
+        properties.getController().setListEndpoints(true);
+        controller = new CompositeController(requestService, properties);
     }
 }
