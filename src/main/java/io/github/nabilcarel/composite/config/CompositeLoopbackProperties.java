@@ -5,7 +5,6 @@ import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.context.properties.DeprecatedConfigurationProperty;
 import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
@@ -91,11 +90,6 @@ public final class CompositeLoopbackProperties {
      */
     private String sslBundle;
 
-    /** Deprecated and ignored. HTTPS loopback calls trust the server's own certificate. */
-    @Getter(lombok.AccessLevel.NONE)
-    @Setter(lombok.AccessLevel.NONE)
-    private boolean trustSelfSignedCertificates = false;
-
     /**
      * Maximum size of one sub-response held in memory.
      *
@@ -119,28 +113,4 @@ public final class CompositeLoopbackProperties {
      */
     @Min(1)
     private Integer maxConnections;
-
-    /**
-     * Returns whether the deprecated trust option is set. It has no effect.
-     *
-     * @return the configured value
-     * @deprecated since 0.1.0: HTTPS loopback calls trust the server's own certificate, so the
-     *     option is no longer needed. Remove it.
-     */
-    @Deprecated(since = "0.1.0", forRemoval = true)
-    @DeprecatedConfigurationProperty(reason = "HTTPS loopback calls trust the server's own certificate")
-    public boolean isTrustSelfSignedCertificates() {
-        return trustSelfSignedCertificates;
-    }
-
-    /**
-     * Sets the deprecated trust option. It has no effect.
-     *
-     * @param trustSelfSignedCertificates ignored
-     * @deprecated since 0.1.0: HTTPS loopback calls trust the server's own certificate.
-     */
-    @Deprecated(since = "0.1.0", forRemoval = true)
-    public void setTrustSelfSignedCertificates(boolean trustSelfSignedCertificates) {
-        this.trustSelfSignedCertificates = trustSelfSignedCertificates;
-    }
 }

@@ -37,21 +37,25 @@ class SubRequestTest {
 
     @Test
     void getDependencies_withManyUnclosedPlaceholders_staysFast() {
-        // Quadratic with the old pattern: every "${" scanned to the end of the text.
-        String url = "/api/" + "${|".repeat(100_000) + "${user.id}";
-        SubRequest request = createSubRequest(url, "GET");
+        // Quadratic with a backtracking pattern: every "${" scanned to the end of the text.
+        String unclosed = "/api/" + "${|".repeat(100_000);
+        SubRequest request = createSubRequest(unclosed + "/${user.id}", "GET");
 
         Set<String> deps = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
             java.time.Duration.ofSeconds(2), request::getDependencies);
 
-        assertThat(deps).containsExactly("user");
+        // The resolver reads "${|${|...${user.id}" as a nested reference, which validation rejects.
+        assertThat(deps).isEmpty();
+        assertThat(createSubRequest("/api/" + "|".repeat(100_000) + "/${user.id}", "GET").getDependencies())
+            .containsExactly("user");
     }
 
     @Test
-    void getDependencies_withNestedPlaceholder_usesTheInnerReference() {
+    void getDependencies_withNestedPlaceholder_addsNothing() {
+        // The resolver rejects nested references, and validation reports them.
         SubRequest request = createSubRequest("/api/${${user.id}.name}", "GET");
 
-        assertThat(request.getDependencies()).containsExactly("user");
+        assertThat(request.getDependencies()).isEmpty();
     }
 
     @Test

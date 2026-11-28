@@ -26,21 +26,6 @@ class LoopbackSupportTest {
     }
 
     @Test
-    void deprecatedTrustOption_isSilentWhenUnset(CapturedOutput output) {
-        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(new MockEnvironment())).isFalse();
-        assertThat(output).doesNotContain("trust-self-signed-certificates");
-    }
-
-    @Test
-    void deprecatedTrustOption_warnsThatItHasNoEffect(CapturedOutput output) {
-        MockEnvironment environment = new MockEnvironment()
-            .withProperty("composite.loopback.trustSelfSignedCertificates", "true");
-
-        assertThat(LoopbackSupport.warnIfDeprecatedTrustOption(environment)).isTrue();
-        assertThat(output).contains("WARN").contains("deprecated and has no effect");
-    }
-
-    @Test
     void plainHttp_pinsNothing() {
         assertThat(LoopbackSupport.loopbackTrust(properties, null, null)).isNull();
     }
@@ -51,6 +36,18 @@ class LoopbackSupportTest {
 
         assertThat(LoopbackSupport.loopbackTrust(properties, null, null)).isNull();
         assertThat(output).contains("WARN").contains("server.ssl is not configured");
+    }
+
+    @Test
+    void requiredClientCertificates_warnThatLoopbackCallsWillFail(CapturedOutput output) {
+        properties.setProtocol("https");
+        org.springframework.boot.web.server.Ssl ssl = new org.springframework.boot.web.server.Ssl();
+        ssl.setEnabled(false);
+        ssl.setClientAuth(org.springframework.boot.web.server.Ssl.ClientAuth.NEED);
+
+        LoopbackSupport.loopbackTrust(properties, ssl, null);
+
+        assertThat(output).contains("WARN").contains("server.ssl.client-auth is need");
     }
 
     @Test

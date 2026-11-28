@@ -342,7 +342,7 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
     }
 
     /**
-     * Logs the port and warns when debug mode or the deprecated trust option is enabled.
+     * Logs the port and warns when debug mode is enabled.
      *
      * {@inheritDoc}
      */
@@ -356,7 +356,6 @@ public class CompositeAutoConfiguration implements ApplicationListener<ServletWe
         if (properties.isDebugEnabled()) {
             log.warn("Composite debug mode is enabled. Disable in production.");
         }
-        LoopbackSupport.warnIfDeprecatedTrustOption(environment);
     }
 
     /**

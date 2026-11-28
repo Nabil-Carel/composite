@@ -3,8 +3,8 @@ plugins {
     id 'maven-publish'
     id 'signing'
     id 'jacoco'
-	id 'org.springframework.boot' version '3.4.0' apply false
-	id 'io.spring.dependency-management' version '1.1.6'
+	id 'org.springframework.boot' version '3.5.16' apply false
+	id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'io.github.nabil-carel'
@@ -16,6 +16,14 @@ java {
 	}
     withSourcesJar()
     withJavadocJar()
+}
+
+// Sources are UTF-8. Without this, javac and javadoc use the platform encoding, such as windows-1252.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
 }
 
 configurations {
@@ -30,7 +38,7 @@ repositories {
 
 dependencyManagement {
     imports {
-        mavenBom "org.springframework.boot:spring-boot-dependencies:3.4.0"
+        mavenBom "org.springframework.boot:spring-boot-dependencies:3.5.16"
     }
 }
 
@@ -65,6 +73,8 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-actuator'
     testImplementation 'org.springframework.boot:spring-boot-starter-security'
     testImplementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    // Matches the launcher to the JUnit version in the Boot BOM instead of Gradle's own.
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 jacoco {

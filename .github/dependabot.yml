@@ -25,6 +25,11 @@ updates:
           - minor
           - patch
     # Major upgrades still arrive, one PR each, so they can be reviewed on their own.
+    ignore:
+      # Dependabot proposes only the newest version, so without this a Boot major release hides
+      # every 3.x patch. Moving to Boot 4 is a migration done by hand, plugin and BOM together.
+      - dependency-name: org.springframework.boot*
+        update-types: [version-update:semver-major]
 
   # Versions of the actions used by the CI and release workflows.
   - package-ecosystem: github-actions

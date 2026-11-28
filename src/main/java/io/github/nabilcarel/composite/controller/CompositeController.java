@@ -13,10 +13,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.async.DeferredResult;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Built-in REST controller that exposes the composite execution and endpoint discovery
@@ -42,7 +44,8 @@ import org.springframework.web.context.request.async.DeferredResult;
  *   <tr>
  *     <td>{@code GET}</td>
  *     <td>{@code {basePath}/endpoints}</td>
- *     <td>Returns the set of endpoints currently registered for composite execution.</td>
+ *     <td>Returns the set of endpoints currently registered for composite execution, when
+ *         {@code composite.controller.list-endpoints=true}.</td>
  *   </tr>
  * </table>
  *
@@ -63,7 +66,6 @@ public class CompositeController {
     /** Lets the batch deadline produce its response before the container's async timeout. */
     private static final long ASYNC_TIMEOUT_MARGIN_MILLIS = 1_000;
 
-    @Lazy
     private final CompositeRequestService requestService;
     private final CompositeProperties properties;
 
@@ -111,10 +113,16 @@ public class CompositeController {
      * {@link io.github.nabilcarel.composite.annotation.CompositeEndpoint &#64;CompositeEndpoint}
      * and are therefore reachable via the composite execute endpoint.
      *
+     * <p>Answers {@code 404} unless {@code composite.controller.list-endpoints=true}.
+     *
      * @return a set of {@link EndpointRegistry.EndpointInfo} descriptors; never {@code null}
+     * @throws ResponseStatusException with {@code 404} when listing is disabled
      */
     @GetMapping("/endpoints")
     public Set<EndpointRegistry.EndpointInfo> getAvailableEndpoints() {
+        if (!properties.getController().isListEndpoints()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
         return requestService.getAvailableEndpoints();
     }
 }

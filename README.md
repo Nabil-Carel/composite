@@ -186,6 +186,17 @@ Each sub-request has these fields:
 
 The batch itself accepts `subRequests` and `stopOnFailure`. Unknown fields are rejected with `400`.
 
+Each sub-response has `referenceId`, `httpStatus` and `body`. JSON bodies, including JSON error bodies such as problem details, are returned as JSON, and other bodies as text. Response headers listed in `composite.response-headers`, `Location` and `ETag` by default, appear in `headers`, which is left out when there are none:
+
+```json
+"created": {
+  "referenceId": "created",
+  "httpStatus": 201,
+  "body": { "id": "42" },
+  "headers": { "Location": "/api/orders/42" }
+}
+```
+
 ### References
 
 `${referenceId.path}` reads a value from an earlier sub-request's JSON response. A sub-request that uses a reference waits for the sub-request it names, so you never declare dependencies separately.
@@ -256,10 +267,13 @@ All settings are optional. The defaults are shown.
 # Endpoint
 composite.base-path=/api/composite
 composite.controller.enabled=true
+# Lists the routes a batch can reach at {base-path}/endpoints. Off by default.
+composite.controller.list-endpoints=false
 
 # Batch limits
 composite.max-sub-requests-per-composite=25
 composite.max-concurrent-sub-requests=5
+composite.max-concurrent-batches=200
 composite.max-depth=10
 composite.max-request-size=2MB
 composite.max-resolved-size=1MB
@@ -274,7 +288,10 @@ composite.security.forwarded-headers=Authorization,Cookie
 composite.security.client-allowed-headers=Accept,Accept-Language,If-Match,If-None-Match,If-Modified-Since,If-Unmodified-Since
 # Empty by default
 # composite.security.blocked-headers=X-User-Id
+composite.security.forward-client-address=true
 composite.header-injection.enabled=true
+# Sub-response headers returned to the client. Set-Cookie is never returned.
+composite.response-headers=Location,ETag
 
 # Loopback calls
 # jdk (no extra dependency) or webclient (requires spring-boot-starter-webflux)
@@ -297,8 +314,10 @@ composite.debug-enabled=false
 |---|---|
 | `base-path` | Path of the built-in endpoint, which is `{base-path}/execute`. |
 | `controller.enabled` | Turn off the built-in endpoint to expose batches from [your own controller](#expose-batches-from-your-own-controller). |
+| `controller.list-endpoints` | Turn on `GET {base-path}/endpoints`, which lists every route a batch can reach. Keep it off in production. |
 | `max-sub-requests-per-composite` | Larger batches are rejected with `400`. |
 | `max-concurrent-sub-requests` | How many sub-requests of one batch run at once. |
+| `max-concurrent-batches` | How many batches run at once across the application. A running batch holds no server thread but keeps its results in memory. Batches over the limit get `503` with `Retry-After`. |
 | `max-depth` | The longest chain of sub-requests that depend on each other. |
 | `max-request-size` | Enforced while the body is read, including chunked requests. Larger batches get `413`. |
 | `max-resolved-size` | How much referenced data one sub-request may insert. It stops a small request from multiplying a large response. |
@@ -307,6 +326,8 @@ composite.debug-enabled=false
 | `security.forwarded-headers` | Headers copied from the outer request to every sub-request. |
 | `security.client-allowed-headers` | Headers a client may set on a sub-request. |
 | `security.blocked-headers` | Headers that are never accepted from clients, even if allowlisted. |
+| `security.forward-client-address` | Adds `X-Forwarded-For`, `-Proto`, `-Host` and `-Port` describing the outer request. With `server.forward-headers-strategy` set to `native` or `framework`, sub-requests then see the real client address. |
+| `response-headers` | Sub-response headers copied into each sub-response's `headers`. |
 | `header-injection.*` | Tracking headers added to each sub-request. See [Tracking headers](#tracking-headers). |
 | `loopback.max-response-size` | Larger sub-responses fail with `503`. Each batch can hold one such response per sub-request in memory. |
 | `loopback.max-connections` | Loopback calls sent at once, across all batches. |
@@ -337,7 +358,7 @@ spring.ssl.bundle.pem.loopback.truststore.certificate=classpath:server.crt
 
 The bundle's trust store, or else its key store, must contain the server certificate itself. A certificate authority alone isn't enough. If neither source is available, loopback calls fall back to the JVM truststore and a warning is logged at startup.
 
-`composite.loopback.trust-self-signed-certificates` is deprecated and has no effect. Remove it.
+Servers that require client certificates (`server.ssl.client-auth=need`) aren't supported, because loopback calls present no client certificate and every sub-request would fail. A warning is logged at startup. Use `client-auth=want`, or check client certificates in a proxy in front of the application.
 
 ## Security
 
@@ -387,7 +408,7 @@ Use them for auditing and logging only. A direct client can send the same header
 - Applications using cookie authentication must keep CSRF protection on the composite endpoint and add their CSRF header to `composite.security.forwarded-headers`.
 - The caller stays authenticated for the async batch response when the app uses Spring Security's default security context repositories. A custom `SecurityContextRepository` must support async dispatches.
 - A gateway only sees the outer composite URL. Protect annotated endpoints with application-level authorization rather than relying only on gateway path rules.
-- Sub-requests arrive from localhost, and one batch can create up to 25 inner requests by default. Account for this in IP rules and rate limits.
+- Sub-requests connect from the loopback address, and one batch can create up to 25 inner requests by default. Each carries `X-Forwarded-For` with the client's address, so with `server.forward-headers-strategy=native` or `framework` your IP rules and rate limits see the real client. Without that setting they see localhost. Account for the 25-fold fan-out in rate limits either way.
 - At `INFO` and above, Composite logs reference IDs, statuses and failure types, never sub-request URLs, headers or response bodies. Rejected requests and error responses are logged at `DEBUG`, where validation messages can include the submitted URL.
 
 ## Extending
@@ -430,7 +451,7 @@ Composite coordinates HTTP calls to your existing endpoints.
 1. **Acceptance:** Spring MVC authenticates the request to `/api/composite/execute`, reads it and binds it.
 2. **Validation:** the batch structure, sizes, headers and targets are checked, and the dependency graph is built from the references. Circular or too-deep dependencies are rejected.
 3. **Scheduling:** sub-requests without dependencies start right away, up to `composite.max-concurrent-sub-requests` at once.
-4. **Loopback calls:** each sub-request is an HTTP call to your application on `localhost`, with forwarded credentials.
+4. **Loopback calls:** each sub-request is an HTTP call to your application on `localhost`, or on `server.address` when the server is bound to one address, with forwarded credentials.
 5. **Reference resolution:** when a sub-request finishes, the sub-requests waiting on it get their references filled in and start.
 6. **Aggregated response:** when every sub-request has a result, or the deadline passes, one response is returned.
 

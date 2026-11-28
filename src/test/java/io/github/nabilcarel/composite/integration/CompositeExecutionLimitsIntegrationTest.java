@@ -275,4 +275,50 @@ class CompositeExecutionLimitsIntegrationTest {
             }
         }
     }
+
+    @Nested
+    @SpringBootTest(
+        classes = CompositeIntegrationTestApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+    )
+    @TestPropertySource(properties = "composite.max-concurrent-batches=1")
+    class BatchLimit {
+
+        @Autowired
+        private TestRestTemplate rest;
+        @Autowired
+        private ActiveBatches activeBatches;
+
+        @BeforeEach
+        void reset() {
+            TestLimitsController.reset();
+        }
+
+        @Test
+        void batchOverTheLimit_isRefusedBeforeItRuns() throws Exception {
+            java.util.concurrent.CompletableFuture<ResponseEntity<String>> first =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> post(rest, batch(List.of(get("slow", "/api/sec/delay/1500")))));
+            long deadline = System.currentTimeMillis() + 5000;
+            while (activeBatches.isEmpty() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+
+            ResponseEntity<String> refused = post(rest, batch(workBatch(1)));
+
+            assertThat(refused.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+            assertThat(refused.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("1");
+            assertThat(JSON.readTree(refused.getBody()).at("/errors/0").asText())
+                .isEqualTo("Too many composite requests are running. Retry later.");
+            assertThat(TestLimitsController.COMPLETED).hasValue(0);
+
+            assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS).getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(activeBatches.count()).isZero();
+
+            ResponseEntity<String> afterwards = post(rest, batch(workBatch(1)));
+
+            assertThat(afterwards.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(TestLimitsController.COMPLETED).hasValue(1);
+        }
+    }
 }

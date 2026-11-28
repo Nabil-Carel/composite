@@ -27,6 +27,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import javax.net.ssl.SSLContext;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 
 /**
@@ -106,6 +107,12 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
 
     @Override
     public void close() {
+        // From Java 21 the client can be stopped at once. close() would wait for every running call.
+        try {
+            HttpClient.class.getMethod("shutdownNow").invoke(client);
+        } catch (ReflectiveOperationException e) {
+            // Java 17: the selector thread ends when the client is garbage collected.
+        }
         if (executor instanceof ExecutorService service) {
             service.shutdownNow();
         }
@@ -197,7 +204,9 @@ public final class JdkHttpSubRequestDispatcher implements SubRequestDispatcher, 
                 ? contentType.getCharset()
                 : StandardCharsets.UTF_8;
         String body = bytes == null || bytes.length == 0 ? null : new String(bytes, charset);
-        return new DispatchResult(response.statusCode(), contentType, body);
+        HttpHeaders headers = new HttpHeaders();
+        response.headers().map().forEach(headers::addAll);
+        return new DispatchResult(response.statusCode(), contentType, body, headers);
     }
 
     private static MediaType parseMediaType(String value) {

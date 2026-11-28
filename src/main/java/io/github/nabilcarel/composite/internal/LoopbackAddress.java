@@ -1,5 +1,7 @@
 package io.github.nabilcarel.composite.internal;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.core.env.Environment;
@@ -31,7 +33,8 @@ public final class LoopbackAddress implements ApplicationListener<ServletWebServ
     }
 
     /**
-     * Returns the base URL, including the context path and Spring MVC servlet path.
+     * Returns the base URL, including the {@code server.address} the server is bound to, the
+     * context path and the Spring MVC servlet path.
      *
      * @return the base URL without a trailing slash
      * @throws IllegalStateException if the server has not started
@@ -42,12 +45,36 @@ public final class LoopbackAddress implements ApplicationListener<ServletWebServ
             if (port <= 0) {
                 throw new IllegalStateException("Composite loopback used before the web server started");
             }
-            current = String.format("%s://localhost:%d%s%s", protocol, port,
+            current = String.format("%s://%s:%d%s%s", protocol, host(environment.getProperty("server.address")), port,
                     normalizePathPrefix(environment.getProperty("server.servlet.context-path")),
                     normalizePathPrefix(environment.getProperty("spring.mvc.servlet.path")));
             baseUrl = current;
         }
         return current;
+    }
+
+    /**
+     * Returns the host the server listens on. A server bound to one address refuses
+     * connections to {@code localhost}, so that address is used. Without one, or with a
+     * wildcard address, the server listens on every interface and {@code localhost} works.
+     */
+    static String host(String serverAddress) {
+        if (serverAddress == null || serverAddress.isBlank()) {
+            return "localhost";
+        }
+
+        String address = serverAddress.trim();
+        if (address.startsWith("[") && address.endsWith("]")) {
+            address = address.substring(1, address.length() - 1);
+        }
+        try {
+            if (InetAddress.getByName(address).isAnyLocalAddress()) {
+                return "localhost";
+            }
+        } catch (UnknownHostException e) {
+            // The server could not bind to it either, so let the call report the failure.
+        }
+        return address.indexOf(':') >= 0 ? "[" + address + "]" : address;
     }
 
     private static String normalizePathPrefix(String path) {

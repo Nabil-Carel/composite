@@ -37,7 +37,9 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -349,17 +351,17 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         HttpStatusCode status = HttpStatusCode.valueOf(result.status());
         var builder = SubResponse.builder()
                 .referenceId(referenceId)
-                .httpStatus(status.value());
+                .httpStatus(status.value())
+                .headers(exposedHeaders(result.headers()));
 
         if (status.is2xxSuccessful()) {
             return successResponse(result, referenceId);
         }
 
         if (status.isError()) {
-            String errorBody = result.body() == null ? "" : result.body();
             // Error responses are normal results and their bodies can hold application details.
             log.debug("Sub-request {} returned {}", referenceId, status.value());
-            return builder.body(errorBody).build();
+            return builder.body(errorBody(result)).build();
         }
 
         // 1xx informational or 3xx redirect
@@ -367,10 +369,38 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         return builder.build();
     }
 
+    /** Header names that would expose credentials to scripts, so they are never returned. */
+    private static final Set<String> NEVER_EXPOSED = Set.of("set-cookie", "set-cookie2");
+
+    private Map<String, String> exposedHeaders(HttpHeaders headers) {
+        Map<String, String> exposed = new LinkedHashMap<>();
+        for (String name : properties.getResponseHeaders()) {
+            List<String> values = headers.get(name);
+            if (values != null && !values.isEmpty() && !NEVER_EXPOSED.contains(name.toLowerCase(Locale.ROOT))) {
+                exposed.put(name, String.join(", ", values));
+            }
+        }
+        return exposed;
+    }
+
+    /** A JSON error body, such as a problem detail, keeps its structure. Invalid JSON stays text. */
+    private Object errorBody(DispatchResult result) {
+        String text = result.body() == null ? "" : result.body();
+        if (text.isBlank() || !isJson(result.contentType())) {
+            return text;
+        }
+        try {
+            return jsonResponseReader().readTree(text);
+        } catch (JsonProcessingException e) {
+            return text;
+        }
+    }
+
     private SubResponse successResponse(DispatchResult result, String referenceId) {
         var builder = SubResponse.builder()
                 .referenceId(referenceId)
-                .httpStatus(result.status());
+                .httpStatus(result.status())
+                .headers(exposedHeaders(result.headers()));
         String text = result.body();
 
         if (text == null || text.isBlank()) {
@@ -448,12 +478,24 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         HttpHeaders forwardedHeaders = new HttpHeaders();
         authForwardingService.forwardAuthentication(request, forwardedHeaders);
+        if (properties.getSecurity().isForwardClientAddress()) {
+            describeOuterRequest(request, forwardedHeaders);
+        }
         SubRequestContext context = new SubRequestContext(
                 HttpHeaders.readOnlyHttpHeaders(forwardedHeaders), debugInfo);
 
         BatchExecution batch = new BatchExecution(requestId, requestMap, this, context,
                 properties.getMaxConcurrentSubRequests(), compositeRequest.isStopOnFailure());
-        activeBatches.increment();
+        if (!activeBatches.tryIncrement(properties.getMaxConcurrentBatches())) {
+            // Expected under overload, so no log line per rejection.
+            log.debug("Composite request rejected: {} batches are already running",
+                    properties.getMaxConcurrentBatches());
+            return CompletableFuture.completedFuture(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .header(HttpHeaders.RETRY_AFTER, "1")
+                    .body(CompositeResponse.builder().hasErrors(true)
+                            .errors(List.of("Too many composite requests are running. Retry later."))
+                            .build()));
+        }
 
         AtomicBoolean finished = new AtomicBoolean();
         Consumer<String> finish = outcome -> {
@@ -489,6 +531,27 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         }
 
         return result;
+    }
+
+    /**
+     * Describes the outer request as the application already saw it. When the server honours
+     * forwarded headers, these values already come from its trusted proxy, so the sub-request
+     * sees the same client. Clients cannot set these headers on a sub-request.
+     */
+    private static void describeOuterRequest(HttpServletRequest request, HttpHeaders headers) {
+        String host = request.getServerName();
+        setIfPresent(headers, "X-Forwarded-For", request.getRemoteAddr());
+        setIfPresent(headers, "X-Forwarded-Proto", request.getScheme());
+        setIfPresent(headers, "X-Forwarded-Host", host != null && host.indexOf(':') >= 0 ? "[" + host + "]" : host);
+        if (request.getServerPort() > 0) {
+            headers.set("X-Forwarded-Port", String.valueOf(request.getServerPort()));
+        }
+    }
+
+    private static void setIfPresent(HttpHeaders headers, String name, String value) {
+        if (value != null && !value.isEmpty()) {
+            headers.set(name, value);
+        }
     }
 
     private static String batchOutcome(CompositeResponse response, Throwable failure) {

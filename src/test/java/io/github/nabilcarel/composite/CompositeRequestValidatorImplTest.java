@@ -444,4 +444,43 @@ class CompositeRequestValidatorImplTest {
         assertThat(errors).noneMatch(e -> e.contains("Circular dependency"))
             .noneMatch(e -> e.contains("Missing dependency"));
     }
+
+    @Test
+    void malformedReferences_areReportedForTheUrlHeadersAndBody() throws Exception {
+        CompositeRequest request = new CompositeRequest();
+        request.setSubRequests(List.of(
+            SubRequestDto.builder().referenceId("a").method("GET").url("/api/a").build(),
+            SubRequestDto.builder()
+                .referenceId("b")
+                .method("POST")
+                .url("/api/b/${a.}")
+                .headers(Map.of("Accept", "${a[}"))
+                .body(mapper.readTree("{\"x\":[\"${a.}\",\"${a..b}\"],\"ok\":\"${a.id}\"}"))
+                .build()));
+        when(validator.validate(any())).thenReturn(java.util.Set.of());
+
+        List<String> errors = validatorService.validateRequest(request);
+
+        assertThat(errors).filteredOn(e -> e.startsWith("[b] Invalid reference in the URL: Malformed reference")).hasSize(1);
+        assertThat(errors).filteredOn(e -> e.startsWith("[b] Invalid reference in header Accept: Malformed")).hasSize(1);
+        // One error for the body, however many of its values are malformed.
+        assertThat(errors).filteredOn(e -> e.startsWith("[b] Invalid reference in the body: Malformed")).hasSize(1);
+    }
+
+    @Test
+    void wellFormedReferences_areAccepted() throws Exception {
+        CompositeRequest request = new CompositeRequest();
+        request.setSubRequests(List.of(
+            SubRequestDto.builder().referenceId("a").method("GET").url("/api/a").build(),
+            SubRequestDto.builder()
+                .referenceId("b")
+                .method("POST")
+                .url("/api/b/${a.items[0].id}?q=${a['key.with.dots']}")
+                .headers(Map.of("Accept", "text/${a.type}"))
+                .body(mapper.readTree("{\"x\":\"${a.id}\",\"y\":[\"${a.list[1]}\"],\"z\":\"plain ${} text\"}"))
+                .build()));
+        when(validator.validate(any())).thenReturn(java.util.Set.of());
+
+        assertThat(validatorService.validateRequest(request)).noneMatch(e -> e.contains("Invalid reference"));
+    }
 }

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -112,8 +113,21 @@ class CompositeErrorMessagesIntegrationTest {
         return Stream.of(
             Arguments.of("${v.missing}", "Property 'missing' not found in response 'v'. References use"),
             Arguments.of("${v.age.more}", "Property 'more' not found"),
-            Arguments.of("${v.}", "Malformed reference"),
             Arguments.of("x ${v}", "is an object or array"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"${v.}", "${v[99999999999]}", "${${v.id}}"})
+    void malformedReference_isRejectedBeforeAnySubRequestRuns(String reference) throws Exception {
+        TestSecurityController.reset();
+
+        ResponseEntity<String> response = post(batch(
+            sub("v", "POST", "/api/sec/echo", "\"body\":{\"x\":1}"),
+            sub("w", "POST", "/api/sec/echo", "\"body\":{\"x\":\"" + reference + "\"}")));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(errors(response)).anyMatch(error -> error.startsWith("[w] Invalid reference in the body"));
+        assertThat(TestSecurityController.lastEcho).isNull();
     }
 
     @ParameterizedTest
