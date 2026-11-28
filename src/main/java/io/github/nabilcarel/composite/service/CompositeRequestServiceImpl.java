@@ -105,7 +105,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         SubRequestContext context = batch.context();
 
         Optional<EndpointInfo> endpointInfo = endpointRegistry.getEndpointInformations(
-                subRequest.getMethod().toUpperCase(), subRequest.getUrl()
+                subRequest.getMethod().toUpperCase(Locale.ROOT), subRequest.getUrl()
         );
 
         if (endpointInfo.isEmpty()) {
@@ -152,7 +152,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
 
         // Re-validate resolved URL against registered endpoints to prevent path traversal/SSRF
         Optional<EndpointInfo> resolvedEndpointInfo = endpointRegistry.getEndpointInformations(
-                subRequest.getMethod().toUpperCase(), resolvedUrl
+                subRequest.getMethod().toUpperCase(Locale.ROOT), resolvedUrl
         );
 
         if (resolvedEndpointInfo.isEmpty()) {
@@ -204,7 +204,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                 ? subRequest.getBody()
                 : null;
         PreparedSubRequest prepared = new PreparedSubRequest(subRequest.getReferenceId(),
-                HttpMethod.valueOf(subRequest.getMethod().toUpperCase()), resolvedUrl,
+                HttpMethod.valueOf(subRequest.getMethod().toUpperCase(Locale.ROOT)), resolvedUrl,
                 HttpHeaders.readOnlyHttpHeaders(headers), body);
 
         // Apply per-subrequest timeout if configured, otherwise use default
@@ -223,9 +223,17 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                 .timeout(timeout)
                 .doOnSubscribe(subscription -> event.begin())
                 .doOnSuccess(subResponse -> {
-                    if (subResponse != null) {
-                        recordedStatus.set(subResponse.getHttpStatus());
+                    if (subResponse == null) {
+                        // Only a custom dispatcher can complete without a result.
+                        log.warn("Sub-request {} got no result: the dispatcher completed empty",
+                                subRequest.getReferenceId());
+                        recordedStatus.set(HttpStatus.INTERNAL_SERVER_ERROR.value());
+                        recordError(batch, subRequest.getReferenceId(),
+                                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                                "The sub-request dispatcher completed without a response.");
+                        return;
                     }
+                    recordedStatus.set(subResponse.getHttpStatus());
                     batch.addResponse(subRequest.getReferenceId(), subResponse);
                 })
                 .onErrorResume(throwable -> {
@@ -241,7 +249,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
                 })
                 // Finishing the batch disposes the last call too, so only a call without a result was cancelled.
                 .doFinally(signal -> event.finish(requestId, subRequest.getReferenceId(),
-                        subRequest.getMethod().toUpperCase(), endpoint, recordedStatus.get(),
+                        subRequest.getMethod().toUpperCase(Locale.ROOT), endpoint, recordedStatus.get(),
                         signal == SignalType.CANCEL && recordedStatus.get() == 0))
                 .then();
     }
@@ -435,7 +443,7 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
     private static boolean isJson(MediaType contentType) {
         return contentType != null
                 && (MediaType.APPLICATION_JSON.isCompatibleWith(contentType)
-                || (contentType.getSubtype() != null && contentType.getSubtype().endsWith("+json")));
+                || contentType.getSubtype().endsWith("+json"));
     }
 
     private static void recordError(BatchExecution batch, String referenceId, int status, String message) {
@@ -456,6 +464,8 @@ public class CompositeRequestServiceImpl implements CompositeRequestService, Sub
         List<String> errors = compositeRequestValidator.validateRequest(compositeRequest);
 
         if (!errors.isEmpty()) {
+            // The messages repeat client input, which could forge log lines, so only the count is logged.
+            log.debug("Composite request rejected with {} validation error(s)", errors.size());
             return CompletableFuture.completedFuture(ResponseEntity.badRequest().body(
                     CompositeResponse.builder().hasErrors(true).errors(errors).build()));
         }

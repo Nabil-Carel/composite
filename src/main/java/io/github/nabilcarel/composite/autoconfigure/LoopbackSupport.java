@@ -38,8 +38,8 @@ final class LoopbackSupport {
         boolean virtualThreads = Threading.VIRTUAL.isActive(environment);
         String limitProperty = virtualThreads ? "server.tomcat.max-connections" : "server.tomcat.threads.max";
         int defaultLimit = virtualThreads ? 8192 : 200;
-        Integer configured = environment.getProperty(limitProperty, Integer.class, defaultLimit);
-        int serverLimit = configured == null || configured < 1 ? defaultLimit : configured;
+        int configured = environment.getProperty(limitProperty, Integer.class, defaultLimit);
+        int serverLimit = configured < 1 ? defaultLimit : configured;
 
         if (loopbackProperties.getMaxConnections() == null) {
             return Math.max(1, serverLimit / 2);

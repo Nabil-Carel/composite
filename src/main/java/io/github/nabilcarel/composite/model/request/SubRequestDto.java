@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -131,7 +132,7 @@ public class SubRequestDto {
     private boolean isBodyValid() {
         boolean hasBody = body != null && !body.isNull() && !body.isMissingNode();
         return method == null
-                || !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase())
+                || !Arrays.asList("POST", "PUT", "PATCH").contains(method.toUpperCase(Locale.ROOT))
                 || hasBody;
     }
 }

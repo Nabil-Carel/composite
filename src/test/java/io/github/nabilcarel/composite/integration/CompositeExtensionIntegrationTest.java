@@ -82,6 +82,9 @@ class CompositeExtensionIntegrationTest {
                     if (request.url().contains("/failing")) {
                         return CompletableFuture.failedFuture(new IllegalStateException("internal-host:1234"));
                     }
+                    if (request.url().contains("/empty")) {
+                        return CompletableFuture.completedFuture(null);
+                    }
                     if (request.url().contains("/hanging")) {
                         CompletableFuture<DispatchResult> never = new CompletableFuture<>();
                         cancellation.onCancel(() -> CANCELLED.set(true));
@@ -174,6 +177,16 @@ class CompositeExtensionIntegrationTest {
 
         assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(503);
         assertThat(response.toString()).doesNotContain("internal-host");
+    }
+
+    @Test
+    void dispatcherWithoutResult_isReportedAsAServerError() throws Exception {
+        JsonNode response = new ObjectMapper().readTree(execute(get("a", "empty"), get("b", "1")).getBody());
+
+        assertThat(response.at("/responses/a/httpStatus").asInt()).isEqualTo(500);
+        assertThat(response.at("/responses/a/body").asText()).contains("completed without a response");
+        assertThat(response.at("/responses/b/httpStatus").asInt()).isEqualTo(200);
+        assertThat(activeBatches.count()).isZero();
     }
 
     @Test
